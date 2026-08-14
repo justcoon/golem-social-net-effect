@@ -1,0 +1,11 @@
+/golem-temp
+/node_modules
+/dist
+**/node_modules
+**/.npm-cache
+**/.npm
+**/.vscode
+**/.idea
+.idea
+*.iml
+package-lock.json

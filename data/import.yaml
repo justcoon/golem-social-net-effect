@@ -1,0 +1,57 @@
+---
+base: '{{ HOST }}'
+iterations: 1
+concurrency: 1
+rampup: 1
+
+plan:
+  - name: Create users, index {{ index }}
+    request:
+      url: /v1/social-net/users/{{ item.userId }}/name
+      method: PUT
+      body: '{{ item.body }}'
+      headers:
+        host: '{{ API_HOST }}'
+        Content-Type: 'application/json'
+        Accept: 'application/json'
+    with_items_from_csv:
+      file_name: ./fixtures/users.csv
+      quote_char: "'"
+  - name: Add user friends, index {{ index }}
+    request:
+      url: /v1/social-net/users/{{ item.userId }}/connections
+      method: PUT
+      body: '{{ item.body }}'
+      headers:
+        host: '{{ API_HOST }}'
+        Content-Type: 'application/json'
+        Accept: 'application/json'
+    with_items_from_csv:
+      file_name: ./fixtures/friends.csv
+      quote_char: "'"
+  - name: Add user followings, index {{ index }}
+    request:
+      url: /v1/social-net/users/{{ item.userId }}/connections
+      method: PUT
+      body: '{{ item.body }}'
+      headers:
+        host: '{{ API_HOST }}'
+        Content-Type: 'application/json'
+        Accept: 'application/json'
+    with_items_from_csv:
+      file_name: ./fixtures/followings.csv
+      quote_char: "'"
+  - name: Add user post, index {{ index }}
+    request:
+      url: /v1/social-net/users/{{ item.userId }}/posts
+      method: POST
+      body: '{{ item.body }}'
+      headers:
+        host: '{{ API_HOST }}'
+        Content-Type: 'application/json'
+        Accept: 'application/json'
+    with_items_from_csv:
+      file_name: ./fixtures/posts.csv
+      quote_char: "'"
+
+
