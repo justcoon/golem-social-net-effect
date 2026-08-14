@@ -1,0 +1,34 @@
+# Schema for IDEA:
+# $schema: https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# Schema for vscode-yaml:
+# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+
+manifestVersion: 1.5.0
+
+app: golem-social-net-effect
+
+environments:
+  local:
+    server: local
+  cloud:
+    server: cloud
+components:
+  golem-social-net-effect:effect-main:
+    dir: ""
+    templates: effect
+httpApi:
+  deployments:
+    local:
+    - domain: localhost:9006
+      agents:
+        UserAgent: {}
+        UserSearchAgent: {}
+        UserPostsAgent: {}
+        UserChatsAgent: {}
+        PostAgent: {}
+        ChatAgent: {}
+        UserChatsViewAgent: {}
+        UserPostsViewAgent: {}
+        UserTimelineViewAgent: {}
+        UserChatsUpdatesAgent: {}
+        UserTimelineUpdatesAgent: {}

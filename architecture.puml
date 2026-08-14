@@ -1,0 +1,99 @@
+@startuml Golem Social Net Architecture
+
+' Define styles
+skinparam componentStyle uml2
+skinparam backgroundColor #F5F5F5
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam roundcorner 10
+skinparam shadowing true
+skinparam ArrowColor #666666
+
+' Color definitions
+!define STATEFUL #D5F5E3
+!define EPHEMERAL #D1F2EB
+!define GATEWAY #F9E79F
+!define ACTOR_COLOR #FFD700
+
+actor "User" as app_user ACTOR_COLOR
+
+package "Golem Cloud" {
+    [API Gateway] as gateway GATEWAY
+
+    package "Stateful Agents (Persistent)" {
+        [User Agent] as user STATEFUL
+        [User Index Agent] as user_index STATEFUL
+        [Post Agent] as post STATEFUL
+        [User Posts Agent] as user_posts STATEFUL
+        [User Timeline Agent] as user_timeline STATEFUL
+        [Timelines Updater Agent] as timeline_updater STATEFUL
+        [Chat Agent] as chat STATEFUL
+        [User Chats Agent] as user_chats STATEFUL
+    }
+
+    package "Ephemeral Agents (View/Computational)" {
+        [User Search Agent] as user_search EPHEMERAL
+        [User Posts View Agent] as user_posts_view EPHEMERAL
+        [User Timeline View Agent] as timeline_view EPHEMERAL
+        [User Timeline Updates Agent] as timeline_updates EPHEMERAL
+        [User Chats View Agent] as chats_view EPHEMERAL
+        [User Chats Updates Agent] as chats_updates EPHEMERAL
+    }
+}
+
+' External to Gateway
+app_user --> gateway : "HTTP REST API"
+
+' Gateway to Agents
+gateway --> user : "Basic Info / Connections"
+gateway --> post : "Likes / Comments"
+gateway --> user_posts : "Create Post"
+gateway --> user_search : "Search Users"
+gateway --> user_posts_view : "Get User Posts"
+gateway --> timeline_view : "Get Timeline"
+gateway --> timeline_updates : "Timeline Long-polling"
+gateway --> user_chats : "Create Chat"
+gateway --> chat : "Send Message / Like"
+gateway --> chats_view : "Get User Chats"
+gateway --> chats_updates : "Chat Long-polling"
+
+' Intern-agent interactions
+user --> user_index : "Register User ID"
+user_search --> user_index : "Get All User IDs"
+user_search --> user : "Query User Profiles"
+user_posts --> post : "Initialize Post"
+user_posts_view --> user_posts : "Get Post Refs"
+user_posts_view --> post : "Resolve Content"
+
+timeline_view --> user_timeline : "Get Post Refs"
+timeline_view --> post : "Resolve Content"
+timeline_updates --> user_timeline : "Poll for Refs"
+
+post --> timeline_updater : "Post Created Event"
+timeline_updater --> user : "Get Connections"
+timeline_updater --> user_timeline : "Fan-out Broadcast"
+
+user_chats --> chat : "Initialize Chat"
+chat --> user_chats : "Chat Update Notifications"
+chats_view --> user_chats : "Get Chat Refs"
+chats_view --> chat : "Resolve Full Content"
+chats_updates --> user_chats : "Poll for Refs"
+
+' Add notes
+note right of gateway
+  <b>API Gateway</b>
+  - Routes REST API to agents
+  - Transforms REST to Golem RPC
+  --
+  <b>Routes by Prefix</b>
+  • /.../users/search → User Search Agent
+  • /.../users/{id} → User Agent
+  • /.../users → User Index Agent
+  • /.../users/{id}/posts → User Posts Agent
+  • /.../users/{id}/timeline → User Timeline Agent
+  • /.../users/{id}/chats → User Chats Agent
+  • /.../posts/{id} → Post Agent
+  • /.../chats/{id} → Chat Agent
+end note
+
+@enduml
