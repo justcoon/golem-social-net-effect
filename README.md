@@ -78,20 +78,41 @@ All core agents (User, User Index, Post, User Posts, User Timeline) have their s
 
 1. **Prerequisites**:
    - Install [Golem CLI](https://learn.golem.cloud/cli) (version 1.5.0+)
+   - Docker and Docker Compose
    - [Running Golem Environment](https://learn.golem.cloud/quickstart#running-golem)
 
    See [Golem Quickstart](https://learn.golem.cloud/quickstart) for more information.
 
-
-2. **Build and Deploy**:
+2. **Start Observability Stack (OpenTelemetry, Jaeger, Prometheus, Grafana)**:
    ```bash
-   # Build all components
-   golem-cli build
-   
-   # Deploy to Golem
-   golem-cli deploy
+   # Copy environment defaults
+   cp .env.example .env
+
+   # Start the OpenTelemetry observability suite
+   docker compose up -d
    ```
 
-3. **Import Sample Data**:
+3. **Build and Deploy**:
+   ```bash
+   # Deploy with environment variables loaded from .env:
+   ./deploy.sh
+   
+   # Or using golem CLI directly:
+   golem build
+   golem deploy
+   ```
+
+4. **Import Sample Data**:
    For information on importing sample data, see the [Data README](./data/README.md).
+
+## Observability & OpenTelemetry (Tracing & Metrics)
+
+The system includes native OpenTelemetry integration powered by Golem's built-in `golem-otlp-exporter` (version `1.5.0`) plugin configured in `golem.yaml`. It streams automatic invocation spans, agent-to-agent RPC calls, log correlations, and runtime metrics without requiring third-party Node.js SDKs in the WebAssembly component.
+
+| Service            | Protocol / Port           | Default URL                                      | Purpose                                                                    |
+| ------------------ | ------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------- |
+| **Jaeger UI**      | HTTP `16686`              | [http://localhost:16686](http://localhost:16686) | Distributed tracing waterfall, latency profiling, and RPC call spans        |
+| **Prometheus**     | HTTP `9090`               | [http://localhost:9090](http://localhost:9090)   | Time-series metrics engine scraping Golem runtime counters and gauges      |
+| **Grafana**        | HTTP `3000`               | [http://localhost:3000](http://localhost:3000)   | Unified dashboards pre-provisioned with Jaeger & Prometheus datasources    |
+| **OTel Collector** | HTTP `4318` / gRPC `4317` | `http://localhost:4318`                          | Ingestion endpoint receiving OTLP signals from Golem                       |
 

@@ -1,0 +1,60 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  # Workaround for upstream Golem bug:
+  # Golem's golem-otlp-exporter with service-name-mode: "agent-type" includes constructor
+  # and phantom UUID discriminators in service.name (e.g. "UserAgent()[<uuid>]" or
+  # "PostAgent(\"post-123\")") instead of using the clean agent_type tag ("UserAgent").
+  # This transform processor extracts just the clean agent name until fixed upstream in Golem.
+  transform:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - replace_pattern(resource.attributes["service.name"], "^([a-zA-Z0-9_-]+).*", "$1")
+    metric_statements:
+      - context: resource
+        statements:
+          - replace_pattern(resource.attributes["service.name"], "^([a-zA-Z0-9_-]+).*", "$1")
+    log_statements:
+      - context: resource
+        statements:
+          - replace_pattern(resource.attributes["service.name"], "^([a-zA-Z0-9_-]+).*", "$1")
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform, batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, transform, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform, batch]
+      exporters: [debug]
