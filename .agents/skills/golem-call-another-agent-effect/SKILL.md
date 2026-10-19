@@ -6,7 +6,7 @@ description: "Calling another agent and awaiting its typed result in an Effect-b
 # Calling Another Agent from an Effect Golem Agent
 
 Every value returned by `defineAgent(...)` has a typed `client`. Obtain a remote handle by yielding
-`Target.client.get(constructorParams)`, then invoke one of its methods with the declared named-input
+`Target.client.get(id)`, then invoke one of its methods with the declared named-input
 record. Both operations return Effects; do not translate Promise-based SDK examples or invent an
 additional `.await()` call.
 
@@ -42,26 +42,24 @@ const RegistryEntries = Schema.Array(RegistryEntry);
 export const GlobalRegistry = defineAgent({
   name: "GlobalRegistry",
   mode: "durable",
-  constructorParams: {},
-  snapshot: Snapshot.define({
+  id: {},
+  snapshotting: Snapshot.define({
     schema: RegistryState,
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     register: method({
-      params: { name: Schema.String, count: Schema.Number },
+      input: { name: Schema.String, count: Schema.Number },
       success: Schema.Boolean,
     }),
     getAll: method({
-      params: {},
+      input: {},
       success: RegistryEntries,
     }),
   },
-}).implement((_constructorParams, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init({});
-
-    return {
+}).implement({
+  init: () => Ref.make<Record<string, typeof RegistryEntry.Type>>({}),
+  methods: (state) => ({
       register: ({ name, count }) =>
         Ref.update(state, (entries) => ({
           ...entries,
@@ -69,9 +67,9 @@ export const GlobalRegistry = defineAgent({
         })).pipe(Effect.as(count < 5)),
 
       getAll: () => Ref.get(state).pipe(Effect.map(Object.values)),
-    };
   }),
-);
+  snapshot: Snapshot.ref<Record<string, typeof RegistryEntry.Type>>(),
+});
 ```
 
 Constructor parameters and method parameters/results/errors must use WIT-representable schemas.
@@ -89,7 +87,7 @@ const getCounter = Effect.gen(function* () {
 });
 ```
 
-For a singleton declared with `constructorParams: {}`, pass an empty record; `get()` and
+For a singleton declared with `id: {}`, pass an empty record; `get()` and
 `get(undefined)` are not the typed API:
 
 ```typescript
@@ -99,12 +97,12 @@ const getRegistry = Effect.gen(function* () {
 ```
 
 Getting a handle does not eagerly run the target constructor. The target agent is created or loaded
-when first invoked, and later calls with the same constructor parameters address the same durable
+when first invoked, and later calls with the same agent id fields address the same durable
 instance.
 
 ## Await a Remote Result in a Handler
 
-Remote method inputs are always named records. Pass `{}` when the method declares `params: {}`.
+Remote method inputs are always named records. Pass `{}` when the method declares `input: {}`.
 Yield the remote call directly to use its success value:
 
 ```typescript
@@ -134,7 +132,7 @@ use `try`/`catch` around an unexecuted Effect.
 - Import local modules with their emitted `.js` suffix under the generated NodeNext/ESM setup.
 - Import the target's exported agent spec or implemented value to access `.client`.
 - Ensure `src/main.ts` imports every implementation module for side-effect registration.
-- For larger layouts, keep the `defineAgent(...)` spec in one module and call `.implement(...)` in
+- For larger layouts, keep the `defineAgent(...)` spec in one module and call `.implement({ ... })` in
   a separate implementation module. Callers can then import the spec without registering another
   implementation.
 

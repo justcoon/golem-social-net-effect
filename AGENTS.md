@@ -16,17 +16,23 @@ Single-component applications keep `src/` and `tsconfig.json` at the application
 ## Agent fundamentals
 
 - Define APIs with `defineAgent`, `method`, and Effect `Schema` values.
-- Agent constructor parameters define durable agent identity.
+- Agent `id` fields define durable agent identity.
 - Implement methods as Effects and compose services with normal Effect operators.
 - Agents are durable by default and invocations are processed sequentially.
-- Use `Snapshot.define(...)` and `snapshot.init(...)` for schema-driven snapshots.
+- Declare method inputs with `input`, mark side-effect-free methods with `readOnly`, and use
+  `Snapshot.define(...)` through the agent's `snapshotting` field for schema-driven snapshots.
+- Use `WitTypes.AgentStream(...)` in schemas and native Effect `Stream` values in handlers.
+- Secrets remain opaque `Schema.Redacted(...)` handles; never log or stringify them.
+- Define and call tools through `Tool`, and attach typed or universal middleware through
+  `Middleware`. Standalone middleware deployment is not supported by the current CLI template.
+- Use `Reflection` for Effect-native runtime agent discovery and schema-checked dynamic calls.
 - Let Golem handle durable retries; do not add manual retry loops around host operations.
 
 ## Runtime constraints
 
 - Import the SDK from `@golemcloud/effect-golem` and Effect APIs from `effect`.
 - Use `@golemcloud/effect-golem/sqlite`, `/postgres`, `/mysql`, or `/ignite2` for database access. Native Node database drivers cannot run inside WebAssembly.
-- The build externalizes Effect and the Effect SDK because both are embedded in the SDK's base WASM. Keep their versions aligned with the generated `package.json`.
+- The build bundles reachable SDK code and generates static exports for discovered capabilities. Effect remains shared in the base WASM. Keep its version aligned with the generated `package.json`.
 - The runtime reports Effect components as TypeScript source, so CLI values and agent IDs use TypeScript syntax.
 
 ## Commands
@@ -35,8 +41,7 @@ Run `npm install` after creating the project, then use `golem build`, `golem dep
 
 ## Documentation
 
-- Effect SDK: https://github.com/golemcloud/effect-golem
+- Effect SDK: https://github.com/golemcloud/golem/tree/main/sdks/effect
 - App manifest: https://learn.golem.cloud/app-manifest
 - Golem documentation: https://learn.golem.cloud
-
 <!-- golem-managed:guide:effect:end -->

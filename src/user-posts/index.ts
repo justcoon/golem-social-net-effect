@@ -67,48 +67,50 @@ export function addUserPost(
 export const UserPostsAgent = defineAgent({
   name: "UserPostsAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.String,
   },
   http: Http.mount("/v1/social-net/users/{id}/posts"),
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Schema.NullOr(UserPostsSchema),
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     getPosts: method({
-      params: {},
+      input: {},
       success: Schema.NullOr(UserPostsSchema),
       http: [Http.get("/")],
     }),
     getUpdates: method({
-      params: { updatesSince: TimestampSchema },
+      input: { updatesSince: TimestampSchema },
       success: Schema.NullOr(UserPostsUpdatesSchema),
     }),
     createPost: method({
-      params: { content: Schema.String },
+      input: { content: Schema.String },
       success: PostRefSchema,
       http: [Http.post("/")],
     }),
   },
-}).implement(({ id }, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init(null);
-
+}).implement({
+  init: ({ id }) =>
+    Ref.make<UserPosts | null>(null).pipe(
+      Effect.map((ref) => ({ id, ref })),
+    ),
+  methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
-      let current = yield* Ref.get(state);
+      let current = yield* Ref.get(ref);
       if (current === null) {
         current = initUserPostsState(id, getCurrentTimestamp());
-        yield* Ref.set(state, current);
+        yield* Ref.set(ref, current);
       }
       return current;
     });
 
     return {
-      getPosts: () => Ref.get(state),
+      getPosts: () => Ref.get(ref),
 
       getUpdates: ({ updatesSince }) =>
-        Ref.get(state).pipe(
+        Ref.get(ref).pipe(
           Effect.map((s) => {
             if (s !== null) {
               const updates = s.posts.filter(
@@ -124,35 +126,42 @@ export const UserPostsAgent = defineAgent({
         ),
 
       createPost: ({ content }) =>
-        Effect.gen(function* () {
-          const s = yield* getOrInitState;
-          const postId = crypto.randomUUID();
-          yield* Effect.logInfo(`create post - id: ${postId}`);
+        Effect.scoped(
+          Effect.gen(function* () {
+            const s = yield* getOrInitState;
+            const postId = crypto.randomUUID();
+            yield* Effect.logInfo(`create post - id: ${postId}`);
 
-          const now = getCurrentTimestamp();
-          const { updatedState, postRef } = addUserPost(s, postId, now);
-          yield* Ref.set(state, updatedState);
+            const now = getCurrentTimestamp();
+            const { updatedState, postRef } = addUserPost(s, postId, now);
+            yield* Ref.set(ref, updatedState);
 
-          const postAgent = yield* PostAgent.client.get({ id: postId }).pipe(Effect.orDie);
-          yield* postAgent.initPost.trigger({
-            createdBy: s.userId,
-            content,
-          }).pipe(Effect.orDie);
+            const postAgent = yield* PostAgent.client.get({ id: postId }).pipe(Effect.orDie);
+            yield* postAgent.initPost.trigger({
+              createdBy: s.userId,
+              content,
+            }).pipe(Effect.orDie);
 
-          return postRef;
-        }),
+            return postRef;
+          }),
+        ),
     };
-  }),
-);
+  },
+  snapshot: {
+    save: (state) => Ref.get(state.ref),
+    restore: (saved, context) =>
+      Ref.make(saved).pipe(Effect.map((ref) => ({ id: context.id.id, ref }))),
+  },
+});
 
 export const UserPostsViewAgent = defineAgent({
   name: "UserPostsViewAgent",
   mode: "ephemeral",
-  constructorParams: {},
+  id: {},
   http: Http.mount("/v1/social-net/users"),
   methods: {
     getPostsView: method({
-      params: {
+      input: {
         userId: Schema.String,
         query: Schema.String,
       },
@@ -160,7 +169,7 @@ export const UserPostsViewAgent = defineAgent({
       http: [Http.get("/{userId}/posts/search?query={query}")],
     }),
     getPostsUpdatesView: method({
-      params: {
+      input: {
         userId: Schema.String,
         since: Schema.NullOr(Schema.String),
       },
@@ -168,8 +177,9 @@ export const UserPostsViewAgent = defineAgent({
       http: [Http.get("/{userId}/posts/updates?since={since}")],
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     getPostsView: ({ userId, query }) =>
       Effect.gen(function* () {
         const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
@@ -212,4 +222,5 @@ export const UserPostsViewAgent = defineAgent({
         return null;
       }),
   }),
-);
+});
+

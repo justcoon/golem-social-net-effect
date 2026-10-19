@@ -24,17 +24,18 @@ import { defineAgent, method } from "@golemcloud/effect-golem";
 export const LogDemoAgent = defineAgent({
   name: "LogDemoAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     instanceName: Schema.String,
   },
   methods: {
     doWork: method({
-      params: { taskName: Schema.String },
+      input: { taskName: Schema.String },
       success: Schema.String,
     }),
   },
-}).implement(({ instanceName }) =>
-  Effect.succeed({
+}).implement({
+  init: ({ instanceName }) => Effect.succeed(instanceName),
+  methods: (instanceName) => ({
     doWork: ({ taskName }) =>
       Effect.gen(function* () {
         yield* Effect.logInfo(`starting task: ${taskName}`);
@@ -49,7 +50,7 @@ export const LogDemoAgent = defineAgent({
         Effect.provideService(References.MinimumLogLevel, "Debug"),
       ),
   }),
-);
+});
 ```
 
 Register the implementation from the component entry point:

@@ -22,11 +22,11 @@ The build is a multi-step pipeline:
 1. **Check** — verifies that required build tools are installed (e.g., `cargo` for Rust, `npm`/`node` for TypeScript).
 2. **Build** — executes the build commands defined in `golem.yaml` for each component. These commands are language-specific:
    - **Rust**: runs `cargo build --target wasm32-wasip2` (or with `--release` for the release preset).
-   - **TypeScript**: runs a multi-stage pipeline — `tsc` for type checking, `golem-typegen` for metadata extraction, `rollup` for bundling, then injects the bundle into a prebuilt QuickJS WASM and optionally preinitializes it.
+   - **TypeScript**: runs `rollup` to bundle the component (type checking happens in-process during bundling), then injects the bundle into a prebuilt QuickJS WASM and optionally preinitializes it.
    - **Effect**: runs `tsc` and `rollup`, then injects the bundle into the QuickJS WASM shipped by `@golemcloud/effect-golem`. Effect agents are self-describing, so this pipeline does not run `golem-typegen`.
    - **Scala**: runs Scala.js compilation, JavaScript linking, QuickJS WASM injection, agent wrapper generation, and WASM composition.
 3. **Add Metadata** — embeds component name and version into the output WASM binary.
-4. **Generate Bridge** — generates bridge SDK code if the project uses inter-component communication.
+4. **Generate Bridge** — automatically generates guest clients selected by component `dependencies.agents` and `dependencies.tools`, and any explicitly selected bridge targets. Local providers build before their consumers; dependency clients are generated before consumer compilation. Prefer tool dependencies over explicit bridge selection for clients used by a component. Configure runtime tool bindings separately: a dependency does not add a binding, and a binding alone does not generate a client.
 
 ### Up-to-date Checks
 
@@ -90,4 +90,11 @@ This removes `golem-temp/` and any other directories listed in the `clean` secti
 
 - **Missing `wasm32-wasip2` target** (Rust): run `rustup target add wasm32-wasip2`
 - **Missing npm packages** (TypeScript/Effect): `golem build` automatically runs `npm install` if `package.json` is present but `node_modules` is missing
-- **Type errors** (TypeScript/Effect): fix the errors in `.ts` source files; the `tsc` step runs with `--noEmit false --emitDeclarationOnly`
+- **Type errors** (TypeScript/Effect): fix the errors in `.ts` source files reported by the language's build pipeline
+
+For a deeper breakdown of build pipeline stages, dependency auto-fix behavior, and manifest tracing, load `golem-troubleshoot-build`.
+
+## Related Skills
+
+- Load `golem-generating-tool-clients` to generate and import typed clients for existing built-in tools or MCP imports
+- Load `golem-troubleshoot-build` when a build fails or when diagnosing manifest/configuration issues

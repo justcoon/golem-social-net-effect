@@ -24,7 +24,7 @@ non-durable; keep the agent durable and choose an explicit snapshot policy inste
 ## Add Schema-Driven Snapshot State
 
 Declare the complete persisted state with Effect Schema, place the snapshot definition on the
-agent, and bind its state exactly once inside `.implement(...)`:
+agent, and select `Snapshot.ref<Saved>()` for matching `Ref` state inside `.implement({ ... })`:
 
 ```typescript
 import { Effect, Ref, Schema } from "effect";
@@ -37,31 +37,29 @@ const CounterState = Schema.Struct({
 export const CounterAgent = defineAgent({
   name: "CounterAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: CounterState,
     policy: Snapshot.policy.everyN(1),
   }),
   methods: {
     increment: method({
-      params: {},
+      input: {},
       success: Schema.Number,
     }),
   },
-}).implement((_constructorParams, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init({ count: 0 });
-
-    return {
+}).implement({
+  init: () => Ref.make({ count: 0 }),
+  methods: (state) => ({
       increment: () =>
         Ref.updateAndGet(state, ({ count }) => ({ count: count + 1 })).pipe(
           Effect.map(({ count }) => count),
         ),
-    };
   }),
-);
+  snapshot: Snapshot.ref<{ count: number }>(),
+});
 ```
 
 If this implementation is in `src/counter-agent.ts`, register it from the component entry point:
@@ -90,8 +88,7 @@ recovery scenario must produce a snapshot after every successful invocation.
 
 ### State Rules
 
-- Call `yield* snapshot.init(initialState)` exactly once. Omitting it or calling it twice fails
-  agent initialization or restoration.
+- Use `Snapshot.ref<Saved>()` when state is a `Ref<Saved>` matching the snapshot schema.
 - Treat the returned `Ref` as the source of truth. Read with `Ref.get` and update immutably with
   `Ref.set`, `Ref.update`, `Ref.modify`, or `Ref.updateAndGet`.
 - Keep all persisted values compatible with the declared schema. Do not put functions, services,
@@ -101,7 +98,7 @@ recovery scenario must produce a snapshot after every successful invocation.
   supported even though open-ended records cannot be constructor or method schemas.
 - Constructor parameters remain the durable agent identity; include them in snapshot state only
   if the methods also need them as mutable persisted data.
-- Preserve the `snapshot` definition and `snapshot.init(...)` binding when changing methods in a
+- Preserve the snapshot definition and implementation snapshot strategy when changing methods in a
   later component revision.
 
 ## How Recovery Works
@@ -110,12 +107,33 @@ For `Snapshot.define`, the SDK owns save and load:
 
 1. On save, it reads the bound `Ref`, encodes the value through the declared Effect Schema, and
    writes a JSON snapshot envelope.
-2. On restore, it runs the new revision's implementation and its one `snapshot.init(...)` call.
-3. It decodes the persisted value through the **new revision's schema** and replaces the initial
-   `Ref` value with the recovered state.
+2. On restore, it decodes the persisted value through the **new revision's schema**.
+3. It restores the state through the implementation's snapshot strategy before constructing
+   handlers.
 
 This decoder boundary is how Effect agents evolve snapshot state. There is no
 `Snapshot.migrate`, `migrations`, or `version` option in `@golemcloud/effect-golem`.
+
+## Agent Files
+
+A snapshot holds only the agent's in-memory state: the value of the snapshot `Ref`, encoded
+through the schema of `Snapshot.define`, or the bytes that a `Snapshot.custom` save returns. It
+does not hold the files that the agent wrote.
+
+- On an executor with filesystem snapshots, Golem captures the agent's files at the same point as
+  the snapshot and restores them before the snapshot loads, so the restore can read them. The
+  snapshot and the files form one restore point.
+- Do not write files in a `Snapshot.custom` save or load, and do not copy file contents into the
+  snapshot state to keep them. Golem does not run the save again in a replay, and the load runs in
+  read-only mode.
+- On an executor without filesystem snapshots, Golem takes a snapshot only while the agent's files
+  are its initial files. After the agent changes its files, Golem takes no automatic snapshot: a
+  start uses an older restore point or replays the full oplog, which writes the files again
+  without data loss. A snapshot-based manual update fails with `UPDATE_NEEDS_FILESYSTEM_SNAPSHOTS`.
+
+Filesystem snapshots are off by default on standalone executors and on local servers, except
+`golem server run` on macOS. See
+[Agent files and snapshots](https://learn.golem.cloud/next/develop/snapshotting#agent-files-and-snapshots).
 
 ## Evolve the State Schema
 
@@ -170,17 +188,14 @@ const CurrentCounterState = Schema.Union([SnapshotV1, SnapshotV2]).pipe(
 Use the evolved schema and current initial state in the new revision:
 
 ```typescript
-snapshot: Snapshot.define({
+snapshotting: Snapshot.define({
   schema: CurrentCounterState,
   policy: Snapshot.policy.everyN(10),
 }),
 
-// Inside .implement(...):
-const state = yield* snapshot.init({
-  version: 2,
-  count: 0,
-  label: "default",
-});
+// Inside .implement({ ... }):
+init: () => Ref.make({ version: 2, count: 0, label: "default" }),
+snapshot: Snapshot.ref<typeof SnapshotV2.Type>(),
 ```
 
 `CurrentCounterState` decodes either persisted V1 or V2 into V2. Its encoder receives only V2 and
@@ -199,11 +214,11 @@ migrate the state.
 
 ## Update Checklist
 
-1. Keep the agent `mode` durable.
+1. Keep the agent `mode` durable. An ephemeral agent takes no snapshots, and the SDK refuses an ephemeral agent that declares `snapshotting`, with an error that names the agent.
 2. Declare all persisted state in the schema passed to `Snapshot.define`.
 3. Select an explicit policy appropriate to recovery frequency.
-4. Call `snapshot.init(...)` once and route all state reads and writes through its `Ref`.
+4. Select `Snapshot.ref<Saved>()` and route all state reads and writes through its `Ref`.
 5. Before deploying a schema change, make the new schema decode every supported old shape.
-6. Preserve the agent name and constructor parameter contract unless the update intentionally
+6. Preserve the agent name and agent id field contract unless the update intentionally
    changes identity.
 7. Build with `golem build`; do not edit generated files under `golem-temp/`.

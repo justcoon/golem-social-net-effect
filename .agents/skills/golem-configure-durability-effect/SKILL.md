@@ -1,6 +1,6 @@
 ---
 name: golem-configure-durability-effect
-description: "Choosing durable or ephemeral agent modes and scoped persistence levels in an Effect-based Golem project. Use when changing agent persistence, making an agent ephemeral, or controlling custom durable sections."
+description: "Choosing durable or ephemeral agent modes and writing custom durable functions in an Effect-based Golem project. Use when changing agent persistence, making an agent ephemeral, or controlling custom durable sections."
 ---
 
 # Configuring Agent Durability (Effect)
@@ -8,11 +8,12 @@ description: "Choosing durable or ephemeral agent modes and scoped persistence l
 Effect Golem has two related but different controls:
 
 1. `defineAgent({ mode: ... })` declares the agent type as durable or ephemeral.
-2. The `Durability` namespace controls the persistence level of a section while an agent is
-   running.
+2. The `Durability` namespace lets specialized library code record its own durable function calls
+   while an agent is running.
 
 Use the declaration mode when the request is to make an agent durable, ephemeral, persistent, or
-stateless. Do not replace an agent-mode change with a runtime persistence-level wrapper.
+stateless. A durable agent cannot opt out of oplog writes for part of its execution; there are no
+persistence levels in Golem 1.6.
 
 ## Durable Agents (Default)
 
@@ -27,9 +28,9 @@ import { defineAgent } from "@golemcloud/effect-golem";
 export const Counter = defineAgent({
   name: "Counter",
   mode: "durable",
-  constructorParams: { name: Schema.String },
+  id: { name: Schema.String },
   methods: {},
-}).implement(() => Effect.succeed({}));
+}).implement({ init: () => Effect.void, methods: () => ({}) });
 ```
 
 Do not try to disable oplog writes while retaining normal durable recovery. If replay becomes slow
@@ -38,11 +39,11 @@ because the oplog is long, keep the agent durable and add snapshots.
 ## Durable with Periodic Snapshots
 
 Snapshots keep the durable agent mode but let recovery restore saved state before replaying newer
-oplog entries. Define snapshot state with Effect Schema and initialize its binding exactly once in
-the agent implementation:
+oplog entries. Define snapshot state with Effect Schema and select a snapshot strategy in the
+agent implementation:
 
 ```typescript
-import { Duration, Effect, Schema } from "effect";
+import { Duration, Effect, Ref, Schema } from "effect";
 import { Snapshot } from "@golemcloud/effect-golem";
 
 const CounterState = Schema.Struct({ count: Schema.Number });
@@ -58,27 +59,26 @@ const periodicSnapshot = Snapshot.define({
 });
 ```
 
-Set the chosen definition as the agent's top-level `snapshot` field. The second argument passed to
-`.implement(...)` is then the snapshot binding:
+Set the chosen definition as the agent's top-level `snapshotting` field and use `Snapshot.ref<Saved>()`
+when the runtime state is a `Ref` of that schema:
 
 ```typescript
 defineAgent({
   name: "Counter",
   mode: "durable",
-  constructorParams: { name: Schema.String },
-  snapshot,
+  id: { name: Schema.String },
+  snapshotting: snapshot,
   methods: {},
-}).implement((_constructorParams, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init({ count: 0 });
-    return {
+}).implement({
+  init: () => Ref.make({ count: 0 }),
+  methods: (state) => ({
       // Existing method handlers that use state...
-    };
   }),
-);
+  snapshot: Snapshot.ref<{ count: number }>(),
+});
 ```
 
-Call `snapshot.init(...)` once, and keep the value schema-serializable. `everyN` accepts a positive
+Keep the saved value schema-serializable. `everyN` accepts a positive
 integer from 1 through 65,535. `periodic` accepts an Effect `Duration.Input` such as
 `Duration.seconds(30)`.
 
@@ -91,12 +91,12 @@ recovery, such as stateless transformations or request adapters:
 export const StatelessHandler = defineAgent({
   name: "StatelessHandler",
   mode: "ephemeral",
-  constructorParams: { name: Schema.String },
+  id: { name: Schema.String },
   methods: {},
-}).implement(() => Effect.succeed({}));
+}).implement({ init: () => Effect.void, methods: () => ({}) });
 ```
 
-Ephemeral agents are not addressable by constructor parameters alone through the Effect SDK's
+Ephemeral agents are not addressable by agent id fields alone through the Effect SDK's
 generated client: their client exposes `getPhantom` and `newPhantom`, but not `get`. Do not depend
 on in-memory state surviving failures or restarts.
 
@@ -121,38 +121,56 @@ The values are lowercase TypeScript string literals. Preserve the agent's name, 
 parameters, methods, implementation registration, and snapshot definition when the task only asks
 for a mode change. Run `golem build` after editing; do not edit generated files under `golem-temp/`.
 
-## Runtime Persistence Levels
+## Custom Durable Functions
 
 Import `Durability` as a namespace from `@golemcloud/effect-golem`. It is not an Effect service tag
 and must not be yielded as `yield* Durability`.
 
-For specialized code implementing custom durability, temporarily select a persistence level with
-the scoped combinator:
+**Sequential execution only.** `Durability.wrap` and `wrapInfallible` support sequential and
+properly nested operations. The body may await host calls when no unrelated guest work runs during
+the wait. Do not overlap a custom operation with other fibers, concurrent effects, or JavaScript
+promises, even if they only use ordinary host APIs. Its scope remains installed while the body
+waits; sibling effects can be attributed to the wrong operation and cause incorrect replay or
+invocation failure. This misuse is not reliably detected.
+
+Await each nested operation before continuing its parent. Do not detach fibers or let work outlive
+the body. On failure or interruption, stop and join outstanding work before the operation closes.
+Structured finalization alone does not make concurrent custom scopes supported. This restriction
+does not apply to ordinary built-in durability when no custom operation is active.
+
+Library code that performs an effect Golem does not already record (for example, a call through a
+custom transport) can make it durable with `Durability.wrap`. On a live run, the body executes and
+its schema-encoded result is recorded in the oplog. On replay, the recorded result is returned and
+the body does not run again:
 
 ```typescript
+import { Schema } from "effect";
 import { Durability } from "@golemcloud/effect-golem";
 
-const result = Durability.withPersistenceLevel(
-  Durability.PersistenceLevel.persistNothing,
-  customDurabilityEffect,
-);
+const stockLevel = (sku: string) =>
+  Durability.wrap(
+    {
+      iface: "inventory",
+      function: "stock-level",
+      functionType: Durability.FunctionType.readRemote,
+      requestSchema: Schema.Struct({ sku: Schema.String }),
+      success: Schema.Number,
+    },
+    { sku },
+    fetchStockLevel(sku),
+  );
 ```
 
-The available levels are:
+Pass an `error` schema to also record typed failures; without it, only successes are recorded.
+Defects and interruption leave the resource unfinished. That does not make a deterministic guest
+defect retryable: it remains permanent. Eligible recovery may reconstruct incomplete work. Use
+`Durability.wrapInfallible` for bodies that cannot fail. Choose `functionType`
+(`readLocal`, `writeLocal`, `readRemote`, or `writeRemote`) by whether the operation
+reads or writes local or remote state. Nesting is recorded by the host in
+`Start.parent_start_index`, not in the function type.
 
-| Value                                                  | Meaning                                                  |
-| ------------------------------------------------------ | -------------------------------------------------------- |
-| `Durability.PersistenceLevel.smart`                    | Default, recommended host-managed durable behavior       |
-| `Durability.PersistenceLevel.persistRemoteSideEffects` | Persist remote side effects only                         |
-| `Durability.PersistenceLevel.persistNothing`           | Run the section without replay or restoration guarantees |
-
-`withPersistenceLevel` restores the previous level when its Effect exits. For low-level integration
-code, `Durability.getPersistenceLevel` is an Effect value and
-`Durability.setPersistenceLevel(level)` changes the host mode directly.
-
-`persistNothing` does **not** make the agent type ephemeral, and `smart` does **not** make an
-ephemeral agent durable. Only the `defineAgent` `mode` field changes the agent type metadata shown
-by `golem agent-type list`.
+Golem's built-in host APIs (HTTP, RPC, key-value, blob storage, databases) are already durable;
+do not wrap them again.
 
 ## Choosing a Mode
 
@@ -161,7 +179,7 @@ by `golem agent-type list`.
 | Counter, shopping cart, workflow, or recoverable external calls     | Durable (default)                    |
 | Stateless transformer or adapter with no recovery requirement       | Ephemeral                            |
 | Long-running durable agent with a growing oplog                     | Durable with snapshots               |
-| Custom library section that implements its own live/replay protocol | Scoped `Durability.PersistenceLevel` |
+| Custom library effect that Golem does not record on its own         | `Durability.wrap`                    |
 
-When in doubt, keep the agent durable. Treat ephemeral mode and `persistNothing` as explicit
-opt-outs from different durability guarantees, not as general performance switches.
+When in doubt, keep the agent durable. Treat ephemeral mode as an explicit opt-out from durability
+guarantees, not as a general performance switch.

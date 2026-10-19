@@ -42,7 +42,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { defineAgent, Http, method, Webhook } from "@golemcloud/effect-golem";
 ```
 
@@ -105,7 +105,7 @@ Declare the ordinary agent mount and, optionally, a custom webhook suffix togeth
 export const PaymentWatcher = defineAgent({
   name: "PaymentWatcher",
   mode: "durable",
-  constructorParams: {
+  id: {
     accountName: Schema.String,
   },
   http: Http.mount("/payments/{accountName}", {
@@ -113,13 +113,14 @@ export const PaymentWatcher = defineAgent({
   }),
   methods: {
     waitForPayment: method({
-      params: {},
+      input: {},
       success: PaymentEvent,
       http: [Http.post("/wait")],
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     waitForPayment: () =>
       Effect.gen(function* () {
         const handle = yield* Webhook.create;
@@ -128,7 +129,7 @@ export const PaymentWatcher = defineAgent({
         return yield* payload.decode(PaymentEvent);
       }).pipe(Effect.provide(FetchHttpClient.layer), Effect.orDie),
   }),
-);
+});
 ```
 
 The generated URL has this shape:
@@ -170,7 +171,7 @@ const shareCallbackUrl = Effect.gen(function* () {
 });
 ```
 
-Define `receiveUrl` with `method({ params: { url: Schema.String }, ... })`; remote methods and
+Define `receiveUrl` with `method({ input: { url: Schema.String }, ... })`; remote methods and
 `client.get(...)` are Effects. Use the remote method's `.trigger(...)` form when URL handoff is
 fire-and-forget and the creator should enter `handle.await` immediately. A normal
 `yield* receiver.receiveUrl(...)` waits for the remote method to finish before reaching the

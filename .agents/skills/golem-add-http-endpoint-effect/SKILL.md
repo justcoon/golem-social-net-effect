@@ -41,25 +41,26 @@ import { defineAgent, Http, method } from "@golemcloud/effect-golem";
 export const TaskAgent = defineAgent({
   name: "TaskAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     taskName: Schema.String,
   },
   http: Http.mount("/api/tasks/{taskName}"),
   methods: {
     // ...
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     // ...
   }),
-);
+});
 ```
 
 Mount rules:
 
 - The path starts with `/` and does not end with `/` unless it is exactly `/`.
-- Every constructor parameter appears as a `{variable}` in the mount path.
-- Variable names use the exact TypeScript `constructorParams` keys, including casing.
+- Every agent id field appears as a `{variable}` in the mount path.
+- Variable names use the exact TypeScript `id` keys, including casing.
 - Mount paths cannot contain query parameters or `{*rest}` catch-all variables.
 - Use `{taskName}`, not `{task-name}`, for a constructor field named `taskName`. This changes only
   the placeholder name; both forms would match the same concrete URL segment.
@@ -81,13 +82,13 @@ Declare routes on the corresponding method. Endpoint paths are relative to the m
 ```typescript
 methods: {
   listItems: method({
-    params: {},
+    input: {},
     success: Schema.Array(Item),
     http: [Http.get("/items")],
   }),
 
   createItem: method({
-    params: {
+    input: {
       name: Schema.String,
       count: Schema.Number,
     },
@@ -96,7 +97,7 @@ methods: {
   }),
 
   updateItem: method({
-    params: {
+    input: {
       id: Schema.String,
       name: Schema.String,
     },
@@ -105,7 +106,7 @@ methods: {
   }),
 
   deleteItem: method({
-    params: { id: Schema.String },
+    input: { id: Schema.String },
     success: Schema.Void,
     http: [Http.del("/items/{id}")],
   }),
@@ -126,11 +127,11 @@ One method can have multiple routes by adding multiple entries to its `http` arr
 
 ## Parameter Mapping
 
-Bindings always refer to exact method `params` keys:
+Bindings always refer to exact method `input` keys:
 
 ```typescript
 searchItems: method({
-  params: {
+  input: {
     category: Schema.String,
     query: Schema.String,
     minPrice: Schema.NullOr(Schema.Number),
@@ -154,30 +155,70 @@ searchItems: method({
 - `headers` maps HTTP header names to method parameter names.
 - A parameter can be bound from only one of path, query, or headers in a given endpoint.
 - `Http.get` has no body, so every parameter must be bound explicitly.
-- For `post`, `put`, `del`, and other bodyful endpoints, every unbound parameter comes from a JSON
-  object field with the same TypeScript name. For example, unbound `inStock` expects
-  `{ "inStock": true }`.
+- For ordinary structured bodies, each unbound user-supplied parameter comes from a JSON object
+  field with the same TypeScript name. For example, unbound `inStock` expects `{ "inStock": true }`.
+  A single object input named `request` needs `{ "request": { "text": "hello" } }`, not the bare
+  inner object. Unstructured text and binary inputs instead consume raw bodies. Load
+  `golem-http-params-effect` for the body mapping rules and the contrast with CLI arguments.
 
 Endpoint paths start with `/`. A `{*rest}` catch-all is allowed only as the final endpoint path
 segment.
+
+## Durable Stream Route Customization
+
+For a method with stream inputs or outputs, pass `durableStreams` in the `Http` endpoint options, or pipe the endpoint through `Http.withDurableStreams(...)`:
+
+```typescript
+http: [Http.post("/events", {
+  durableStreams: {
+    slots: [
+      { source: "input", slot: "input", name: "uploads" },
+      {
+        source: "output",
+        slot: "$result",
+        name: "events",
+        contentType: "application/vnd.example.events",
+      },
+    ],
+    allowExternalWrites: true,
+    allowStreamDelete: false,
+    allowInvocationDelete: false,
+    load: {
+      maxConcurrentReadersPerStream: 8,
+      maxAppendRequestsPerSecondPerStream: 25,
+    },
+  },
+})],
+```
+
+- `source` and `slot` select canonical top-level stream slots. `$result` is the only implicit result selector.
+- `name` changes the public URL and OpenAPI name; the canonical name is no longer accepted in the public URL.
+- `contentType` is allowed only for a direct byte stream (`stream<u8>`) and must be a concrete non-text, non-JSON MIME type without parameters or wildcards. JSON-shaped streams stay `application/json`; do not use `text/plain` for `stream<string>`. SSE still uses `text/event-stream` and base64 data.
+- The three `allow*` options default to `true`. Setting one to `false` removes that protocol operation and produces `405` with an exact `Allow` header.
+- The live-reader limit is 1 through 16 and applies to long-poll and SSE. The append limit must be positive and cannot be set when external writes are disabled. A route-local limit rejection is `429` with `Retry-After: 1`.
+- Limits are maintained per route and worker-service node, not as a cluster-wide quota.
 
 ## HTTP Response Mapping
 
 The Golem HTTP host maps Effect method result schemas as follows:
 
-| Method success schema     | Handler success value   | HTTP response   |
-| ------------------------- | ----------------------- | --------------- |
-| `Schema.Void`             | `Effect.void`           | 204, empty body |
-| `T`                       | `Effect<T>`             | 200, JSON `T`   |
-| `UnstructuredText(...)`   | inline text reference   | 200, plain text |
-| `UnstructuredBinary(...)` | inline binary reference | 200, raw bytes  |
-| `Schema.NullOr(T)`        | `T`                     | 200, JSON `T`   |
-| `Schema.NullOr(T)`        | `null`                  | 404, empty body |
-| method with `error: E`    | `Effect.fail(E)`        | 500, JSON `E`   |
+| Method success schema          | Handler result                       | HTTP response         |
+| ------------------------------ | ------------------------------------ | --------------------- |
+| `Schema.Void`                  | `Effect.void`                        | 204, empty body       |
+| `T`                            | `Effect<T>`                          | 200, JSON `T`         |
+| `UnstructuredText(...)`        | inline text reference                | 200, plain text       |
+| `UnstructuredBinary(...)`      | inline binary reference              | 200, raw bytes        |
+| `UnstructuredText/Binary(...)` | `{ _tag: "url", val }` reference     | 307 redirect to `val` |
+| `Schema.NullOr(T)`             | `T`                                  | 200, JSON `T`         |
+| `Schema.NullOr(T)`             | `null`                               | 404, empty body       |
+| `Unstructured.Option(element)` | `Option.some(ref)` / `Option.none()` | 200 raw body / 404    |
+| method with `error: E`         | `Effect.fail(E)`                     | 500, JSON `E`         |
 
 `Schema.NullOr(T)` is lowered by the Effect SDK to WIT `option<T>`, which is what enables the
-host's 200/404 mapping. Use a declared `error` schema and `Effect.fail(...)` for expected typed
-failures; do not use defects for normal not-found behavior.
+host's 200/404 mapping. A declared `error: E` wraps the success in `result<_, E>`, so
+`Schema.NullOr(T)` or `Unstructured.Option(...)` combined with `error: E` gives 200 / 404 / 500.
+Use a declared `error` schema and `Effect.fail(...)` for expected typed failures; do not use
+defects for normal not-found behavior.
 
 Use an unstructured success value when the response itself must be plain text or binary rather
 than JSON:
@@ -194,27 +235,56 @@ const binarySuccess = Unstructured.UnstructuredBinary({
 
 const textValue = {
   _tag: "inline" as const,
-  val: {
-    data: "hello from Effect",
-    textType: { languageCode: "en" },
-  },
+  val: "hello from Effect",
+  languageCode: "en",
 } satisfies Unstructured.TextReferenceValue;
 
 const binaryValue = {
   _tag: "inline" as const,
-  val: {
-    data: new Uint8Array([0, 127, 255]),
-    binaryType: { mimeType: "application/octet-stream" },
-  },
+  val: new Uint8Array([0, 127, 255]),
+  mimeType: "application/octet-stream",
 } satisfies Unstructured.BinaryReferenceValue;
 ```
 
 Put `textSuccess` or `binarySuccess` in the method's `success` field and return
 `Effect.succeed(textValue)` or `Effect.succeed(binaryValue)` from its handler. Inline text maps to a
-`text/plain` body and uses `textType.languageCode` as `Content-Language`; inline binary maps to the
-declared `binaryType.mimeType`. Unstructured successes cannot also declare a typed method `error`.
-Use `Schema.Struct(...)`, arrays, and other ordinary schemas for JSON responses, and `Schema.Void`
-for a 204 empty response. These are fixed host mappings, not an arbitrary response builder.
+`text/plain` body and uses `languageCode` as `Content-Language`; inline binary uses its
+`mimeType` (default `application/octet-stream`). A `{ _tag: "url", val }` reference maps to a
+307 redirect.
+
+An unstructured success combines with a typed `error`, and `Unstructured.Option(element)` makes it
+optional. The nested value is still sent as the raw body, not as JSON. A guarded raw download
+(raw bytes / 404 / JSON error 500):
+
+```typescript
+import { Effect, Option, Schema } from "effect";
+import { Http, method, Unstructured } from "@golemcloud/effect-golem";
+
+const Pending = Schema.Struct({ _tag: Schema.Literal("Pending") });
+
+const download = method({
+  input: { id: Schema.String },
+  success: Unstructured.Option(
+    Unstructured.UnstructuredBinary({ restrictions: [{ mimeType: "image/png" }] }),
+  ),
+  error: Pending,
+  http: [Http.get("/files/{id}")],
+});
+
+// In the implementation:
+const downloadHandler = ({ id }: { id: string }) =>
+  id === "missing"
+    ? Effect.succeed(Option.none()) // 404
+    : id === "pending"
+      ? Effect.fail({ _tag: "Pending" as const }) // 500, JSON body
+      : Effect.succeed(
+          Option.some({ _tag: "inline" as const, val: new Uint8Array([1, 2, 3]), mimeType: "image/png" }),
+        ); // 200, raw bytes
+```
+
+`Unstructured.Option(...)` is only valid as a method `success`. Use `Schema.Struct(...)`, arrays,
+and other ordinary schemas for JSON responses, and `Schema.Void` for a 204 empty response. These
+are fixed host mappings, not an arbitrary response builder.
 
 ## Complete Durable Example
 
@@ -235,36 +305,34 @@ const TodoState = Schema.Struct({
 export const TodoAgent = defineAgent({
   name: "TodoAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     listName: Schema.String,
   },
   http: Http.mount("/todos/{listName}"),
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: TodoState,
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     createItem: method({
-      params: { title: Schema.String },
+      input: { title: Schema.String },
       success: TodoItem,
       http: [Http.post("/items")],
     }),
     listItems: method({
-      params: {},
+      input: {},
       success: Schema.Array(TodoItem),
       http: [Http.get("/items")],
     }),
     completeItem: method({
-      params: { id: Schema.String },
+      input: { id: Schema.String },
       success: Schema.NullOr(TodoItem),
       http: [Http.post("/items/{id}/complete")],
     }),
   },
-}).implement((_constructor, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init({ items: [] });
-
-    return {
+}).implement({
+  init: () => Ref.make({ items: [] as ReadonlyArray<typeof TodoItem.Type> }),
+  methods: (state) => ({
       createItem: ({ title }) =>
         Ref.modify(state, ({ items }) => {
           const item = {
@@ -290,9 +358,9 @@ export const TodoAgent = defineAgent({
             },
           ] as const;
         }),
-    };
   }),
-);
+  snapshot: Snapshot.ref<{ items: ReadonlyArray<typeof TodoItem.Type> }>(),
+});
 ```
 
 Register the top-level implementation:
@@ -327,10 +395,10 @@ generated OpenAPI document at `/openapi.yaml` after deployment.
 - Import Effect APIs from `effect` and `defineAgent`, `Http`, `method`, and `Snapshot` from
   `@golemcloud/effect-golem`.
 - Do not use decorators or classes from `@golemcloud/golem-ts-sdk` in an Effect component.
-- Every constructor parameter must appear in the mount path with exact TypeScript casing.
+- Every agent id field must appear in the mount path with exact TypeScript casing.
 - Every bound path, query, or header variable must match a method parameter.
 - Unbound bodyful-method parameters use same-named camelCase JSON body fields.
 - Handlers return Effects, not plain values or `async` functions.
-- Call `snapshot.init(...)` exactly once when the definition declares a snapshot.
+- Use `Snapshot.ref<Saved>()` when a snapshotted `Ref` contains the saved schema value.
 - Import the implementation module from `src/main.ts`; otherwise it is not registered.
 - Do not edit generated files under `golem-temp/`.

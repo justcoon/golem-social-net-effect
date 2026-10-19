@@ -61,17 +61,18 @@ import { defineAgent, method } from "@golemcloud/effect-golem";
 export const TracedAgent = defineAgent({
   name: "TracedAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     instanceName: Schema.String,
   },
   methods: {
     doTracedWork: method({
-      params: { taskName: Schema.String },
+      input: { taskName: Schema.String },
       success: Schema.String,
     }),
   },
-}).implement(({ instanceName }) =>
-  Effect.succeed({
+}).implement({
+  init: ({ instanceName }) => Effect.succeed(instanceName),
+  methods: (instanceName) => ({
     doTracedWork: ({ taskName }) =>
       Effect.gen(function* () {
         yield* Effect.logInfo(`processing: ${taskName}`).pipe(
@@ -85,7 +86,7 @@ export const TracedAgent = defineAgent({
         }),
       ),
   }),
-);
+});
 ```
 
 Import the implemented agent module from `src/main.ts` so its top-level registration runs:
@@ -167,6 +168,14 @@ When `metrics` is included in `signals`, the exporter sends Golem runtime metric
 
 Metrics include `service.name`, `golem.agent.id`, `golem.component.id`, and
 `golem.component.version` attributes.
+
+## Export Semantics
+
+- Durable `Start`, `End`, and `Cancelled` metadata drives span lifecycle. Long-lived spans retain their origin trace across invocations; failed or retrying attempts do not prematurely close the logical span. Logs use their recorded trace context.
+- Stream summaries use bounded event/outcome metric labels and aggregate item counts; they do not emit a span per item. Active resource and memory values are gauges, and metric labels avoid resource IDs and payload values.
+- In `agent-type` service-name mode, `service.name` excludes constructor parameters and phantom instance IDs; `golem.agent.id` remains the full identity.
+- Collector export is best effort. Accepted source state advances when a send fails, and traces, logs, and metrics are still attempted independently. Exactly-once plugin batch delivery is not exactly-once collector delivery.
+- Fork/revert cannot retract telemetry already accepted by a collector. Source deletion does not provide a terminal signal, so no successful close is invented. Switching plugin instances can lose open-span state; continuity is deferred to GOL-667.
 
 ## Local Observability Stack
 

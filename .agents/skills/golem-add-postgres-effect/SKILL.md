@@ -55,8 +55,8 @@ the client through Effect context.
 
 ## Open and Reuse a Connection
 
-Create the client once in the outer `Effect.gen` passed to `defineAgent(...).implement(...)`,
-before returning the handlers, so the implemented agent instance reuses one host connection:
+Create the client once in the agent's `init` Effect and return it as state before `methods`
+constructs the handlers, so the implemented agent instance reuses one host connection:
 
 ```typescript
 Effect.gen(function* () {
@@ -80,7 +80,7 @@ Add the method contract to the existing definition's `methods` map:
 
 ```typescript
 checkPostgres: method({
-  params: {},
+  input: {},
   success: Schema.String,
 }),
 ```
@@ -88,10 +88,10 @@ checkPostgres: method({
 Add a handler with the same TypeScript-cased property name to the object returned by `implement`.
 Keep existing contracts and handlers unchanged unless the task requests otherwise.
 
-The CLI agent type comes from the definition's `name`, not the exported TypeScript constant. If
-the requested invocation is `CounterAgent("db-test")` but the generated Effect template contains
-`name: "Counter"`, change the definition to `name: "CounterAgent"` and keep the matching agent key
-in `golem.yaml` aligned:
+The CLI agent type comes from the definition's `name`, not the exported TypeScript constant.
+The default Effect template declares `name: "CounterAgent"`, so invoke it as
+`CounterAgent("db-test")`. If you rename an agent, keep the matching agent key in `golem.yaml`
+aligned:
 
 ```yaml
 httpApi:

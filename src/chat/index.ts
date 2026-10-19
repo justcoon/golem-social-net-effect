@@ -64,16 +64,18 @@ function executeChatUpdates(
   participantsIds: readonly string[],
   updatedAt: Timestamp,
 ): Effect.Effect<void, any, any> {
-  return Effect.gen(function* () {
-    for (const pId of participantsIds) {
-      const userChats = yield* UserChatsAgent.client
-        .get({ id: pId })
-        .pipe(Effect.orDie);
-      yield* userChats.chatUpdated
-        .trigger({ chatId, updatedAt })
-        .pipe(Effect.orDie);
-    }
-  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      for (const pId of participantsIds) {
+        const userChats = yield* UserChatsAgent.client
+          .get({ id: pId })
+          .pipe(Effect.orDie);
+        yield* userChats.chatUpdated
+          .trigger({ chatId, updatedAt })
+          .pipe(Effect.orDie);
+      }
+    }),
+  );
 }
 
 function executeAddChat(
@@ -82,18 +84,20 @@ function executeAddChat(
   createdAt: Timestamp,
   participantsIds: readonly string[],
 ): Effect.Effect<void, any, any> {
-  return Effect.gen(function* () {
-    for (const pId of participantsIds) {
-      if (pId !== createdBy) {
-        const userChats = yield* UserChatsAgent.client
-          .get({ id: pId })
-          .pipe(Effect.orDie);
-        yield* userChats.addChat
-          .trigger({ chatId, createdBy, createdAt })
-          .pipe(Effect.orDie);
+  return Effect.scoped(
+    Effect.gen(function* () {
+      for (const pId of participantsIds) {
+        if (pId !== createdBy) {
+          const userChats = yield* UserChatsAgent.client
+            .get({ id: pId })
+            .pipe(Effect.orDie);
+          yield* userChats.addChat
+            .trigger({ chatId, createdBy, createdAt })
+            .pipe(Effect.orDie);
+        }
       }
-    }
-  });
+    }),
+  );
 }
 
 export function initChatState(chatId: string, now: Timestamp): Chat {
@@ -301,26 +305,26 @@ export function chatMatchesQuery(chat: Chat, query: Query): boolean {
 export const ChatAgent = defineAgent({
   name: "ChatAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.String,
   },
   http: Http.mount("/v1/social-net/chats/{id}"),
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Schema.NullOr(ChatSchema),
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     getChat: method({
-      params: {},
+      input: {},
       success: Schema.NullOr(ChatSchema),
       http: [Http.get("/")],
     }),
     getChatIfMatch: method({
-      params: { query: QuerySchema },
+      input: { query: QuerySchema },
       success: Schema.NullOr(ChatSchema),
     }),
     initChat: method({
-      params: {
+      input: {
         participantsIds: Schema.Array(Schema.String),
         createdBy: Schema.String,
         createdAt: TimestampSchema,
@@ -329,25 +333,25 @@ export const ChatAgent = defineAgent({
       error: ErrorResponseSchema,
     }),
     addParticipants: method({
-      params: { participants: Schema.Array(Schema.String) },
+      input: { participants: Schema.Array(Schema.String) },
       success: UpdateChatResponseSchema,
       error: ErrorResponseSchema,
-      http: [Http.custom("PATCH", "/participants")],
+      http: [Http.patch("/participants")],
     }),
     addMessage: method({
-      params: { userId: Schema.String, content: Schema.String },
+      input: { userId: Schema.String, content: Schema.String },
       success: AddMessageResponseSchema,
       error: ErrorResponseSchema,
       http: [Http.post("/messages")],
     }),
     removeMessage: method({
-      params: { messageId: Schema.String },
+      input: { messageId: Schema.String },
       success: UpdateChatResponseSchema,
       error: ErrorResponseSchema,
       http: [Http.del("/messages/{messageId}")],
     }),
     setMessageLike: method({
-      params: {
+      input: {
         messageId: Schema.String,
         userId: Schema.String,
         likeType: LikeTypeSchema,
@@ -357,7 +361,7 @@ export const ChatAgent = defineAgent({
       http: [Http.put("/messages/{messageId}/likes")],
     }),
     removeMessageLike: method({
-      params: {
+      input: {
         messageId: Schema.String,
         userId: Schema.String,
       },
@@ -366,186 +370,192 @@ export const ChatAgent = defineAgent({
       http: [Http.del("/messages/{messageId}/likes/{userId}")],
     }),
   },
-}).implement(({ id }, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init(null);
+}).implement({
+  init: ({ id }) =>
+    Ref.make<Chat | null>(null).pipe(
+      Effect.map((ref) => ({ id, ref })),
+    ),
+  methods: ({ id, ref }) => ({
+    getChat: () => Ref.get(ref),
 
-    return {
-      getChat: () => Ref.get(state),
+    getChatIfMatch: ({ query }) =>
+      Ref.get(ref).pipe(
+        Effect.map((s) => (s && chatMatchesQuery(s, query) ? s : null)),
+      ),
 
-      getChatIfMatch: ({ query }) =>
-        Ref.get(state).pipe(
-          Effect.map((s) => (s && chatMatchesQuery(s, query) ? s : null)),
-        ),
+    initChat: ({ participantsIds, createdBy, createdAt }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s !== null) {
+          return yield* Effect.fail({ message: "Chat already exists" });
+        }
 
-      initChat: ({ participantsIds, createdBy, createdAt }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s !== null) {
-            return yield* Effect.fail({ message: "Chat already exists" });
-          }
+        const pSet = new Set(participantsIds);
+        pSet.add(createdBy);
+        const uniqueParticipants = Array.from(pSet);
 
-          const pSet = new Set(participantsIds);
-          pSet.add(createdBy);
-          const uniqueParticipants = Array.from(pSet);
+        if (uniqueParticipants.length < 2) {
+          return yield* Effect.fail({
+            message: "Chat must have at least 2 participants",
+          });
+        }
 
-          if (uniqueParticipants.length < 2) {
-            return yield* Effect.fail({
-              message: "Chat must have at least 2 participants",
-            });
-          }
+        let newChat = initChatState(id, getCurrentTimestamp());
+        yield* Effect.logInfo(
+          `init chat - created by: ${createdBy}, participants: ${uniqueParticipants.length}`,
+        );
 
-          let newChat = initChatState(id, getCurrentTimestamp());
-          yield* Effect.logInfo(
-            `init chat - created by: ${createdBy}, participants: ${uniqueParticipants.length}`,
-          );
+        newChat = initializeChatAgent(newChat, participantsIds, createdBy, createdAt);
+        yield* Ref.set(ref, newChat);
 
-          newChat = initializeChatAgent(newChat, participantsIds, createdBy, createdAt);
-          yield* Ref.set(state, newChat);
+        yield* executeAddChat(
+          newChat.chatId,
+          createdBy,
+          newChat.createdAt,
+          newChat.participants,
+        );
 
-          yield* executeAddChat(
-            newChat.chatId,
-            createdBy,
-            newChat.createdAt,
-            newChat.participants,
-          );
+        return { chatId: newChat.chatId };
+      }),
 
-          return { chatId: newChat.chatId };
-        }),
+    addParticipants: ({ participants }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s === null) {
+          return yield* Effect.fail({ message: "Chat not exists" });
+        }
 
-      addParticipants: ({ participants }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s === null) {
-            return yield* Effect.fail({ message: "Chat not exists" });
-          }
+        const oldParticipants = [...s.participants];
+        const { updatedChat, newParticipants } = addChatParticipants(
+          s,
+          participants,
+          getCurrentTimestamp(),
+        );
 
-          const oldParticipants = [...s.participants];
-          const { updatedChat, newParticipants } = addChatParticipants(
+        if (newParticipants.length === 0) {
+          return yield* Effect.fail({ message: "No new participants" });
+        }
+
+        yield* Effect.logInfo(
+          `add participants - new participants: ${newParticipants.length}`,
+        );
+        yield* Ref.set(ref, updatedChat);
+
+        yield* executeAddChat(
+          updatedChat.chatId,
+          updatedChat.createdBy,
+          updatedChat.updatedAt,
+          newParticipants,
+        );
+        yield* executeChatUpdates(updatedChat.chatId, oldParticipants, updatedChat.updatedAt);
+
+        return { chatId: updatedChat.chatId };
+      }),
+
+    addMessage: ({ userId, content }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s === null) {
+          return yield* Effect.fail({ message: "Chat not exists" });
+        }
+
+        yield* Effect.logInfo(`add message - user id: ${userId}, content: ${content}`);
+        const { chat: updatedChat, message } = yield* Effect.fromResult(
+          addChatMessage(
             s,
-            participants,
-            getCurrentTimestamp(),
-          );
-
-          if (newParticipants.length === 0) {
-            return yield* Effect.fail({ message: "No new participants" });
-          }
-
-          yield* Effect.logInfo(
-            `add participants - new participants: ${newParticipants.length}`,
-          );
-          yield* Ref.set(state, updatedChat);
-
-          yield* executeAddChat(
-            updatedChat.chatId,
-            updatedChat.createdBy,
-            updatedChat.updatedAt,
-            newParticipants,
-          );
-          yield* executeChatUpdates(updatedChat.chatId, oldParticipants, updatedChat.updatedAt);
-
-          return { chatId: updatedChat.chatId };
-        }),
-
-      addMessage: ({ userId, content }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s === null) {
-            return yield* Effect.fail({ message: "Chat not exists" });
-          }
-
-          yield* Effect.logInfo(`add message - user id: ${userId}, content: ${content}`);
-          const { chat: updatedChat, message } = yield* Effect.fromResult(
-            addChatMessage(
-              s,
-              userId,
-              content,
-              getCurrentTimestamp(),
-            ),
-          );
-
-          yield* Ref.set(state, updatedChat);
-          yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
-
-          return { chatId: updatedChat.chatId, messageId: message.messageId };
-        }),
-
-      removeMessage: ({ messageId }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s === null) {
-            return yield* Effect.fail({ message: "Chat not exists" });
-          }
-
-          yield* Effect.logInfo(`remove message - message id: ${messageId}`);
-          const { updatedChat, updated } = removeChatMessage(s, messageId, getCurrentTimestamp());
-
-          if (!updated) {
-            return yield* Effect.fail({ message: "Message not found" });
-          }
-
-          yield* Ref.set(state, updatedChat);
-          yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
-
-          return { chatId: updatedChat.chatId };
-        }),
-
-      setMessageLike: ({ messageId, userId, likeType }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s === null) {
-            return yield* Effect.fail({ message: "Chat not exists" });
-          }
-
-          yield* Effect.logInfo(
-            `set message like - message id: ${messageId}, user id: ${userId}, like type: ${likeType}`,
-          );
-
-          const { updatedChat, updated } = setChatMessageLike(
-            s,
-            messageId,
             userId,
-            likeType,
+            content,
             getCurrentTimestamp(),
-          );
+          ),
+        );
 
-          if (!updated) {
-            return yield* Effect.fail({ message: "Message not found" });
-          }
+        yield* Ref.set(ref, updatedChat);
+        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
 
-          yield* Ref.set(state, updatedChat);
-          yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+        return { chatId: updatedChat.chatId, messageId: message.messageId };
+      }),
 
-          return { chatId: updatedChat.chatId };
-        }),
+    removeMessage: ({ messageId }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s === null) {
+          return yield* Effect.fail({ message: "Chat not exists" });
+        }
 
-      removeMessageLike: ({ messageId, userId }) =>
-        Effect.gen(function* () {
-          const s = yield* Ref.get(state);
-          if (s === null) {
-            return yield* Effect.fail({ message: "Chat not exists" });
-          }
+        yield* Effect.logInfo(`remove message - message id: ${messageId}`);
+        const { updatedChat, updated } = removeChatMessage(s, messageId, getCurrentTimestamp());
 
-          yield* Effect.logInfo(
-            `remove message like - chat id: ${messageId}, user id: ${userId}`,
-          );
+        if (!updated) {
+          return yield* Effect.fail({ message: "Message not found" });
+        }
 
-          const { updatedChat, updated } = removeChatMessageLike(
-            s,
-            messageId,
-            userId,
-            getCurrentTimestamp(),
-          );
+        yield* Ref.set(ref, updatedChat);
+        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
 
-          if (!updated) {
-            return yield* Effect.fail({ message: "Message not found" });
-          }
+        return { chatId: updatedChat.chatId };
+      }),
 
-          yield* Ref.set(state, updatedChat);
-          yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+    setMessageLike: ({ messageId, userId, likeType }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s === null) {
+          return yield* Effect.fail({ message: "Chat not exists" });
+        }
 
-          return { chatId: updatedChat.chatId };
-        }),
-    };
+        yield* Effect.logInfo(
+          `set message like - message id: ${messageId}, user id: ${userId}, like type: ${likeType}`,
+        );
+
+        const { updatedChat, updated } = setChatMessageLike(
+          s,
+          messageId,
+          userId,
+          likeType,
+          getCurrentTimestamp(),
+        );
+
+        if (!updated) {
+          return yield* Effect.fail({ message: "Message not found" });
+        }
+
+        yield* Ref.set(ref, updatedChat);
+        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+
+        return { chatId: updatedChat.chatId };
+      }),
+
+    removeMessageLike: ({ messageId, userId }) =>
+      Effect.gen(function* () {
+        const s = yield* Ref.get(ref);
+        if (s === null) {
+          return yield* Effect.fail({ message: "Chat not exists" });
+        }
+
+        yield* Effect.logInfo(
+          `remove message like - chat id: ${messageId}, user id: ${userId}`,
+        );
+
+        const { updatedChat, updated } = removeChatMessageLike(
+          s,
+          messageId,
+          userId,
+          getCurrentTimestamp(),
+        );
+
+        if (!updated) {
+          return yield* Effect.fail({ message: "Message not found" });
+        }
+
+        yield* Ref.set(ref, updatedChat);
+        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+
+        return { chatId: updatedChat.chatId };
+      }),
   }),
-);
+  snapshot: {
+    save: (state) => Ref.get(state.ref),
+    restore: (saved, context) =>
+      Ref.make(saved).pipe(Effect.map((ref) => ({ id: context.id.id, ref }))),
+  },
+});
+

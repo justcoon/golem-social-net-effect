@@ -1,9 +1,9 @@
 # Schema for IDEA:
-# $schema: https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# $schema: https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
 # Schema for vscode-yaml:
-# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.6.0/golem.schema.json
 
-manifestVersion: 1.5.0
+manifestVersion: 1.6.0
 
 app: golem-social-net-effect
 
@@ -18,14 +18,14 @@ components:
   golem-social-net-effect:effect-main:
     dir: ""
     templates: effect
-    plugins:
-      - name: golem-otlp-exporter
-        version: "1.5.0"
-        parameters:
-          endpoint: "{{ OTLP_ENDPOINT }}"
-          signals: "traces,logs,metrics"
-          # Intended to export clean agent type names; normalized in otel-collector due to Golem bug
-          service-name-mode: "agent-type"
+#    plugins:
+#      - name: golem-otlp-exporter
+#        version: "1.5.8"
+#        parameters:
+#          endpoint: "{{ OTLP_ENDPOINT }}"
+#          signals: "traces,logs,metrics"
+#          # Intended to export clean agent type names; normalized in otel-collector due to Golem bug
+#          service-name-mode: "agent-type"
     presets:
       local:
         default: true
