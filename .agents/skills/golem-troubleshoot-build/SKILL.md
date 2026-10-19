@@ -7,6 +7,8 @@ description: "Troubleshooting Golem build failures and debugging manifest file (
 
 Both `golem` and `golem-cli` can be used — all commands below work with either binary.
 
+For the normal build workflow and `golem build` usage, load `golem-build`. This skill focuses on what to do when that build fails.
+
 ## Build Pipeline Overview
 
 `golem build` executes a multi-step pipeline. Understanding which step failed is the first step to diagnosing problems:
@@ -55,7 +57,6 @@ After tool checks, `golem build` validates project dependencies and can auto-fix
 ### Rust Dependency Checks
 The CLI inspects every Rust component's `Cargo.toml` (and workspace `Cargo.toml` if present) for:
 - **`golem-rust`** — must be present with a semantically compatible version (or matching path for local development)
-- **`wstd`** — checked if present, version compatibility verified
 - **`log`** — checked if present, ensures the `kv` feature is enabled
 - **`serde`** — checked if present, ensures the `derive` feature is enabled
 - **`serde_json`** — checked if present, version compatibility verified
@@ -65,17 +66,14 @@ If dependencies are outdated or missing required features, the CLI shows a diff 
 ### TypeScript Dependency Checks
 The CLI inspects the root `package.json` for:
 - **`@golemcloud/golem-ts-sdk`** — must be present with a compatible version
-- **`@golemcloud/golem-ts-typegen`** (devDependency) — must be present
-- **Rollup plugins** (`@rollup/plugin-alias`, `@rollup/plugin-node-resolve`, `@rollup/plugin-typescript`, `@rollup/plugin-commonjs`, `@rollup/plugin-json`) — version compatibility checked
+- **Rollup plugins** (`@rollup/plugin-node-resolve`, `@rollup/plugin-typescript`, `@rollup/plugin-commonjs`, `@rollup/plugin-json`) — version compatibility checked
 - **`typescript`**, **`rollup`**, **`tslib`**, **`@types/node`** — version compatibility checked
 
 The CLI also validates `tsconfig.json` settings:
 - `compilerOptions.moduleResolution` must be `"bundler"`
-- `compilerOptions.experimentalDecorators` must be `true`
-- `compilerOptions.emitDecoratorMetadata` must be `true`
 
 ### Effect Dependency Checks
-The CLI inspects the root `package.json` for `@golemcloud/effect-golem`, `effect`, and the shared Rollup/TypeScript build tooling. Effect components require `compilerOptions.moduleResolution` to be `"bundler"`, but do not require the TypeScript SDK's decorator settings or `golem-typegen` package.
+The CLI inspects the root `package.json` for `@golemcloud/effect-golem`, `effect`, and the shared Rollup/TypeScript build tooling. Effect components require `compilerOptions.moduleResolution` to be `"bundler"`, but do not require the TypeScript SDK package.
 
 ### AGENTS.md and Skill Files
 The CLI checks that the project's `AGENTS.md` and `.agents/skills/` directory contain up-to-date content matching the current CLI version's templates. If they are stale, the CLI updates them automatically during the build.
@@ -110,7 +108,7 @@ Fix: `rustup target add wasm32-wasip2`
 The CLI shows a diff of the changes it wants to make. Review the diff — it will update version numbers or add missing features. Pass `--yes` to auto-accept.
 
 ### TypeScript or Effect `tsconfig.json` Issues
-Both profiles require `moduleResolution` to be `"bundler"`. Ordinary TypeScript SDK components additionally require the decorator settings listed above; Effect components do not. The CLI auto-fixes these during the check step.
+If `moduleResolution` is not set to `"bundler"`, the build will fail during type checking. The CLI auto-fixes this during the check step.
 
 ### Up-to-Date Check Confusion
 `golem build` tracks file hashes to skip unchanged steps. If files were modified outside the build (e.g., by `cargo build`), the check may be stale. Force a full rebuild:
@@ -161,7 +159,11 @@ golem component manifest-trace my-app:main
 To see how the trace changes under a specific environment:
 
 ```shell
-golem component manifest-trace -e staging
+golem component manifest-trace -E staging
 ```
 
 This activates the `staging` environment's presets, letting you verify that environment-specific overrides are applied correctly.
+
+## Related Skills
+
+- Load `golem-build` for the normal `golem build` workflow and options

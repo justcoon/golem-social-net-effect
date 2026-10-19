@@ -15,7 +15,7 @@ handler.
 1. Define nested configuration records with `Schema.Struct`.
 2. Create a config service class with `defineConfig(name, fields)`.
 3. Attach the class to `defineAgent` as `config: MyAgentConfig`.
-4. Keep durable identity in `constructorParams`; config is not a constructor parameter.
+4. Keep durable identity in `id`; config is not a agent id field.
 5. Yield the config service and its field Effects inside method handlers.
 6. Set values in `golem.yaml`, at agent creation, or through typed RPC overrides.
 
@@ -52,17 +52,18 @@ export const MyAgent = defineAgent({
   name: "MyAgent",
   mode: "durable",
   config: MyAgentConfig,
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   methods: {
     getSettings: method({
-      params: {},
+      input: {},
       success: Settings,
     }),
   },
-}).implement(({ name }) =>
-  Effect.succeed({
+}).implement({
+  init: ({ name }) => Effect.succeed(name),
+  methods: (name) => ({
     getSettings: () =>
       Effect.gen(function* () {
         const config = yield* MyAgentConfig;
@@ -74,11 +75,11 @@ export const MyAgent = defineAgent({
         return { appName, maxRetries, serverHost, serverPort };
       }).pipe(Effect.annotateLogs({ agentName: name })),
   }),
-);
+});
 ```
 
 Import the implementation module from the component entry point so the top-level
-`.implement(...)` call registers it:
+`.implement({ init, methods })` call registers it:
 
 ```typescript
 // src/main.ts
@@ -87,11 +88,9 @@ import "./my-agent.js";
 
 ## How Config Reaches the Implementation
 
-The first `.implement(...)` argument is only the decoded `constructorParams` record. With a
-snapshot, the snapshot binding is the second argument. There is no positional `Config<T>` input:
-the complete example above correctly receives `({ name })` and yields `MyAgentConfig` from the
-handler Effect. Do not write `.implement(({ name }, config) => ...)`; Effect Golem never passes
-config as that second argument.
+`init` receives only the decoded `id` record. There is no positional `Config<T>` input: the complete
+example above retains `name` as state and yields `MyAgentConfig` from the handler Effect. Do not
+invent a config argument; yield the config service from an Effect.
 
 Prefer yielding the service inside a handler when methods should observe configuration changes.
 Non-secret leaves are loaded when their Effects are evaluated, cached within that invocation,

@@ -53,8 +53,8 @@ through Effect context.
 
 ## Open and Reuse a Connection
 
-Pass a MySQL URL to `MySqlClient.make` in the outer `Effect.gen` used by
-`defineAgent(...).implement(...)`. Construct the client once, before returning the handlers, so
+Pass a MySQL URL to `MySqlClient.make` in the agent's `init` Effect. Construct the client once and
+return it as state before `methods` constructs the handlers, so
 the implemented agent instance reuses one host connection:
 
 ```typescript
@@ -79,7 +79,7 @@ Add the method contract to the existing definition's `methods` map:
 
 ```typescript
 checkMysql: method({
-  params: {},
+  input: {},
   success: Schema.String,
 }),
 ```
@@ -87,10 +87,10 @@ checkMysql: method({
 Add a handler with the same TypeScript-cased property name to the object returned by `implement`.
 Keep existing contracts and handlers unchanged unless the task requests otherwise.
 
-The CLI agent type comes from the definition's `name`, not the exported TypeScript constant. If
-the requested invocation is `CounterAgent("db-test")` but the generated Effect template contains
-`name: "Counter"`, change the definition to `name: "CounterAgent"` and keep the matching agent key
-in `golem.yaml` aligned:
+The CLI agent type comes from the definition's `name`, not the exported TypeScript constant.
+The default Effect template declares `name: "CounterAgent"`, so invoke it as
+`CounterAgent("db-test")`. If you rename an agent, keep the matching agent key in `golem.yaml`
+aligned:
 
 ```yaml
 httpApi:

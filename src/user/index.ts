@@ -283,79 +283,84 @@ export function userMatchesQuery(user: User, query: Query): boolean {
 export const UserIndexAgent = defineAgent({
   name: "UserIndexAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     shard: Schema.Number,
   },
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: UserIndexStateSchema,
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     add: method({
-      params: { userId: Schema.String },
+      input: { userId: Schema.String },
       success: Schema.Void,
     }),
     getState: method({
-      params: {},
+      input: {},
       success: UserIndexStateSchema,
     }),
   },
-}).implement(({ shard }, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init(initUserIndexState());
+}).implement({
+  init: ({ shard }) =>
+    Ref.make<UserIndexState>(initUserIndexState()).pipe(
+      Effect.map((ref) => ({ shard, ref })),
+    ),
+  methods: ({ shard, ref }) => ({
+    add: ({ userId }) =>
+      Ref.update(ref, (current) => {
+        const userShard = getUserIndexShard(userId);
+        if (userShard === shard && !current.userIds.includes(userId)) {
+          return {
+            userIds: [...current.userIds, userId],
+            updatedAt: getCurrentTimestamp(),
+          };
+        }
+        return current;
+      }),
 
-    return {
-      add: ({ userId }) =>
-        Ref.update(state, (current) => {
-          const userShard = getUserIndexShard(userId);
-          if (userShard === shard && !current.userIds.includes(userId)) {
-            return {
-              userIds: [...current.userIds, userId],
-              updatedAt: getCurrentTimestamp(),
-            };
-          }
-          return current;
-        }),
-
-      getState: () => Ref.get(state),
-    };
+    getState: () => Ref.get(ref),
   }),
-);
+  snapshot: {
+    save: (state) => Ref.get(state.ref),
+    restore: (saved, context) =>
+      Ref.make(saved).pipe(Effect.map((ref) => ({ shard: context.id.shard, ref }))),
+  },
+});
 
 export const UserAgent = defineAgent({
   name: "UserAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.String,
   },
   http: Http.mount("/v1/social-net/users/{id}"),
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Schema.NullOr(UserSchema),
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     getUser: method({
-      params: {},
+      input: {},
       success: Schema.NullOr(UserSchema),
       http: [Http.get("/")],
     }),
     getUserIfMatch: method({
-      params: { query: QuerySchema },
+      input: { query: QuerySchema },
       success: Schema.NullOr(UserSchema),
     }),
     setName: method({
-      params: { name: Schema.NullOr(Schema.String) },
+      input: { name: Schema.NullOr(Schema.String) },
       success: UpdateUserResponseSchema,
       http: [Http.put("/name")],
     }),
     setEmail: method({
-      params: { email: Schema.NullOr(Schema.String) },
+      input: { email: Schema.NullOr(Schema.String) },
       success: UpdateUserResponseSchema,
       error: ErrorResponseSchema,
       http: [Http.put("/email")],
     }),
     connectUser: method({
-      params: {
+      input: {
         userId: Schema.String,
         connectionType: UserConnectionTypeSchema,
       },
@@ -363,7 +368,7 @@ export const UserAgent = defineAgent({
       http: [Http.put("/connections")],
     }),
     disconnectUser: method({
-      params: {
+      input: {
         userId: Schema.String,
         connectionType: UserConnectionTypeSchema,
       },
@@ -371,29 +376,35 @@ export const UserAgent = defineAgent({
       http: [Http.del("/connections")],
     }),
   },
-}).implement(({ id }, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init(null);
+});
 
-    const getOrInitState = Effect.gen(function* () {
-      let current = yield* Ref.get(state);
-      if (current === null) {
-        current = initUserState(id, getCurrentTimestamp());
-        yield* Ref.set(state, current);
-        const userShard = getUserIndexShard(id);
-        const indexAgent = yield* UserIndexAgent.client
-          .get({ shard: userShard })
-          .pipe(Effect.orDie);
-        yield* indexAgent.add.trigger({ userId: id }).pipe(Effect.orDie);
-      }
-      return current;
-    });
+UserAgent.implement({
+  init: ({ id }) =>
+    Ref.make<User | null>(null).pipe(
+      Effect.map((ref) => ({ id, ref })),
+    ),
+  methods: ({ id, ref }) => {
+    const getOrInitState = Effect.scoped(
+      Effect.gen(function* () {
+        let current = yield* Ref.get(ref);
+        if (current === null) {
+          current = initUserState(id, getCurrentTimestamp());
+          yield* Ref.set(ref, current);
+          const userShard = getUserIndexShard(id);
+          const indexAgent = yield* UserIndexAgent.client
+            .get({ shard: userShard })
+            .pipe(Effect.orDie);
+          yield* indexAgent.add.trigger({ userId: id }).pipe(Effect.orDie);
+        }
+        return current;
+      }),
+    );
 
     return {
-      getUser: () => Ref.get(state),
+      getUser: () => Ref.get(ref),
 
       getUserIfMatch: ({ query }) =>
-        Ref.get(state).pipe(
+        Ref.get(ref).pipe(
           Effect.map((u) => (u && userMatchesQuery(u, query) ? u : null)),
         ),
 
@@ -401,7 +412,7 @@ export const UserAgent = defineAgent({
         Effect.gen(function* () {
           const user = yield* getOrInitState;
           const updated = setUserAgentName(user, name, getCurrentTimestamp());
-          yield* Ref.set(state, updated);
+          yield* Ref.set(ref, updated);
           return { userId: id };
         }),
 
@@ -411,121 +422,135 @@ export const UserAgent = defineAgent({
           const updatedUser = yield* Effect.fromResult(
             setUserAgentEmail(user, email, getCurrentTimestamp()),
           );
-          yield* Ref.set(state, updatedUser);
+          yield* Ref.set(ref, updatedUser);
           return { userId: id };
         }),
 
       connectUser: ({ userId, connectionType }) =>
-        Effect.gen(function* () {
-          const user = yield* getOrInitState;
-          const { updatedUser, isNew } = connectUserAgent(
-            user,
-            userId,
-            connectionType,
-            getCurrentTimestamp(),
-          );
-          yield* Ref.set(state, updatedUser);
-          if (isNew) {
-            yield* Effect.logInfo(`connect user - id: ${userId}, type: ${connectionType}`);
-            const otherUser = yield* UserAgent.client
-              .get({ id: userId })
-              .pipe(Effect.orDie);
-            yield* otherUser.connectUser
-              .trigger({
-                userId: id,
-                connectionType: getOppositeConnectionType(connectionType),
-              })
-              .pipe(Effect.orDie);
-          }
-          return { userId: id };
-        }),
+        Effect.scoped(
+          Effect.gen(function* () {
+            const user = yield* getOrInitState;
+            const { updatedUser, isNew } = connectUserAgent(
+              user,
+              userId,
+              connectionType,
+              getCurrentTimestamp(),
+            );
+            yield* Ref.set(ref, updatedUser);
+            if (isNew) {
+              yield* Effect.logInfo(`connect user - id: ${userId}, type: ${connectionType}`);
+              const otherUser = yield* UserAgent.client
+                .get({ id: userId })
+                .pipe(Effect.orDie);
+              yield* otherUser.connectUser
+                .trigger({
+                  userId: id,
+                  connectionType: getOppositeConnectionType(connectionType),
+                })
+                .pipe(Effect.orDie);
+            }
+            return { userId: id };
+          }),
+        ),
 
       disconnectUser: ({ userId, connectionType }) =>
-        Effect.gen(function* () {
-          const user = yield* getOrInitState;
-          const { updatedUser, isNew } = disconnectUserAgent(
-            user,
-            userId,
-            connectionType,
-            getCurrentTimestamp(),
-          );
-          yield* Ref.set(state, updatedUser);
-          if (isNew) {
-            yield* Effect.logInfo(`disconnect user - id: ${userId}, type: ${connectionType}`);
-            const otherUser = yield* UserAgent.client
-              .get({ id: userId })
-              .pipe(Effect.orDie);
-            yield* otherUser.disconnectUser
-              .trigger({
-                userId: id,
-                connectionType: getOppositeConnectionType(connectionType),
-              })
-              .pipe(Effect.orDie);
-          }
-          return { userId: id };
-        }),
+        Effect.scoped(
+          Effect.gen(function* () {
+            const user = yield* getOrInitState;
+            const { updatedUser, isNew } = disconnectUserAgent(
+              user,
+              userId,
+              connectionType,
+              getCurrentTimestamp(),
+            );
+            yield* Ref.set(ref, updatedUser);
+            if (isNew) {
+              yield* Effect.logInfo(`disconnect user - id: ${userId}, type: ${connectionType}`);
+              const otherUser = yield* UserAgent.client
+                .get({ id: userId })
+                .pipe(Effect.orDie);
+              yield* otherUser.disconnectUser
+                .trigger({
+                  userId: id,
+                  connectionType: getOppositeConnectionType(connectionType),
+                })
+                .pipe(Effect.orDie);
+            }
+            return { userId: id };
+          }),
+        ),
     };
-  }),
-);
+  },
+  snapshot: {
+    save: (state) => Ref.get(state.ref),
+    restore: (saved, context) =>
+      Ref.make(saved).pipe(Effect.map((ref) => ({ id: context.id.id, ref }))),
+  },
+});
 
 export const UserSearchAgent = defineAgent({
   name: "UserSearchAgent",
   mode: "ephemeral",
-  constructorParams: {},
+  id: {},
   http: Http.mount("/v1/social-net/users"),
   methods: {
     search: method({
-      params: { query: Schema.String },
+      input: { query: Schema.String },
       success: Schema.Array(UserSchema),
       http: [Http.get("/search?query={query}")],
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     search: ({ query }) =>
-      Effect.gen(function* () {
-        yield* Effect.logInfo("Search users - query: " + query);
-        const parsedQuery = parseQuery(query);
-        const result: User[] = [];
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Effect.logInfo("Search users - query: " + query);
+          const parsedQuery = parseQuery(query);
+          const result: User[] = [];
 
-        const shardStates: UserIndexState[] = [];
-        for (let i = 0; i < USER_INDEX_SHARDS; i++) {
-          const shardAgent = yield* UserIndexAgent.client
-            .get({ shard: i })
-            .pipe(Effect.orDie);
-          const shardState = yield* shardAgent.getState({}).pipe(Effect.orDie);
-          shardStates.push(shardState);
-        }
+          const shardStates: UserIndexState[] = [];
+          for (let i = 0; i < USER_INDEX_SHARDS; i++) {
+            const shardAgent = yield* UserIndexAgent.client
+              .get({ shard: i })
+              .pipe(Effect.orDie);
+            const shardState = yield* shardAgent.getState({}).pipe(Effect.orDie);
+            shardStates.push(shardState);
+          }
 
-        const allUserIds: string[] = [];
-        for (const sState of shardStates) {
-          const matchingIds = sState.userIds.filter((id) =>
-            userIdMatchesQuery(id, parsedQuery),
-          );
-          allUserIds.push(...matchingIds);
-        }
+          const allUserIds: string[] = [];
+          for (const sState of shardStates) {
+            const matchingIds = sState.userIds.filter((id) =>
+              userIdMatchesQuery(id, parsedQuery),
+            );
+            allUserIds.push(...matchingIds);
+          }
 
-        if (allUserIds.length > 0) {
-          const idsChunks = arrayChunks(allUserIds, 20);
+          if (allUserIds.length > 0) {
+            const idsChunks = arrayChunks(allUserIds, 20);
 
-          for (const ids of idsChunks) {
-            yield* Effect.logInfo("Search users - ids: (" + ids.join(", ") + ")");
+            for (const ids of idsChunks) {
+              yield* Effect.logInfo("Search users - ids: (" + ids.join(", ") + ")");
 
-            for (const id of ids) {
-              const uAgent = yield* UserAgent.client
-                .get({ id })
-                .pipe(Effect.orDie);
-              const userVal = yield* uAgent
-                .getUserIfMatch({ query: parsedQuery })
-                .pipe(Effect.orDie);
-              if (userVal !== null) {
-                result.push(userVal);
+              for (const id of ids) {
+                const uAgent = yield* UserAgent.client
+                  .get({ id })
+                  .pipe(Effect.orDie);
+                const userVal = yield* uAgent
+                  .getUserIfMatch({ query: parsedQuery })
+                  .pipe(Effect.orDie);
+                if (userVal !== null) {
+                  result.push(userVal);
+                }
               }
             }
           }
-        }
 
-        return result;
-      }),
+          return result;
+        }),
+      ),
   }),
-);
+});
+
+

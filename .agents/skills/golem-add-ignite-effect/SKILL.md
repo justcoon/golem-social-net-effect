@@ -55,8 +55,7 @@ through Effect context.
 ## Open and Reuse a Connection
 
 Ignite uses thin-client URLs such as `ignite://host:10800`. Construct the client once in the
-outer `Effect.gen` passed to `defineAgent(...).implement(...)`, before returning the methods
-object:
+agent's `init` Effect and return it as state before `methods` constructs the handlers:
 
 ```typescript
 Effect.gen(function* () {
@@ -80,7 +79,7 @@ Add the method to the existing agent's `methods` map and give it a string succes
 
 ```typescript
 checkIgnite: method({
-  params: {},
+  input: {},
   success: Schema.String,
   description: "Checks the Ignite connection",
 }),

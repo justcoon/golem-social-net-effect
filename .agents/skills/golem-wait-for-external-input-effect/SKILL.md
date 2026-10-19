@@ -116,27 +116,25 @@ const PromiseIdSchema = Schema.Struct({
 export const DeciderAgent = defineAgent({
   name: "DeciderAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   http: Http.mount("/deciders/{name}"),
   methods: {
     receive: method({
-      params: { promiseId: PromiseIdSchema },
+      input: { promiseId: PromiseIdSchema },
       success: Schema.Void,
       http: [Http.post("/receive")],
     }),
     decide: method({
-      params: { decision: Schema.String },
+      input: { decision: Schema.String },
       success: Schema.Boolean,
       http: [Http.post("/decide")],
     }),
   },
-}).implement(() =>
-  Effect.gen(function* () {
-    const pending = yield* Ref.make<Agents.PromiseId | undefined>(undefined);
-
-    return {
+}).implement({
+  init: () => Ref.make<Agents.PromiseId | undefined>(undefined),
+  methods: (pending) => ({
       receive: ({ promiseId }) => Ref.set(pending, promiseId),
 
       decide: ({ decision }) =>
@@ -156,34 +154,35 @@ export const DeciderAgent = defineAgent({
           if (completed) yield* Ref.set(pending, undefined);
           return completed;
         }).pipe(Effect.orDie),
-    };
   }),
-);
+});
 
 export const ApprovalAgent = defineAgent({
   name: "ApprovalAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   http: Http.mount("/approvals/{name}"),
   methods: {
     request: method({
-      params: {},
+      input: {},
       success: Schema.String,
       http: [Http.post("/request")],
     }),
     getResult: method({
-      params: {},
+      input: {},
       success: Schema.String,
       http: [Http.get("/result")],
     }),
   },
-}).implement(({ name }) =>
-  Effect.gen(function* () {
-    const result = yield* Ref.make("");
-
-    return {
+}).implement({
+  init: ({ name }) =>
+    Effect.gen(function* () {
+      const result = yield* Ref.make("");
+      return { name, result };
+    }),
+  methods: ({ name, result }) => ({
       request: () =>
         Effect.gen(function* () {
           const promiseId = yield* Agents.Promises.create;
@@ -199,9 +198,8 @@ export const ApprovalAgent = defineAgent({
         }).pipe(Effect.orDie),
 
       getResult: () => Ref.get(result),
-    };
   }),
-);
+});
 ```
 
 Register the module for side effects:

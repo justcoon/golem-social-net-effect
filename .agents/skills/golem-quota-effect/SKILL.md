@@ -69,8 +69,8 @@ import { Effect, Schema } from "effect";
 import { defineAgent, method, Quota } from "@golemcloud/effect-golem";
 ```
 
-`Quota.acquireQuotaToken` is an Effect. Acquire it once in the agent's `.implement(...)` Effect
-body and close over it in the returned handlers. This closure is the Effect equivalent of keeping
+`Quota.acquireQuotaToken` is an Effect. Acquire it once in the agent's `init` Effect
+and pass it to `methods` as state. This is the Effect equivalent of keeping
 the token in the constructed agent's state; do not acquire a new token for every invocation or at
 module top level.
 
@@ -83,18 +83,16 @@ const QuotaCallResult = Schema.Struct({
 export const QuotaAgent = defineAgent({
   name: "QuotaAgent",
   mode: "durable",
-  constructorParams: { instanceName: Schema.String },
+  id: { instanceName: Schema.String },
   methods: {
     rateLimitedCall: method({
-      params: { input: Schema.String },
+      input: { input: Schema.String },
       success: QuotaCallResult,
     }),
   },
-}).implement(() =>
-  Effect.gen(function* () {
-    const token = yield* Quota.acquireQuotaToken("api-calls", 1n);
-
-    return {
+}).implement({
+  init: () => Quota.acquireQuotaToken("api-calls", 1n),
+  methods: (token) => ({
       rateLimitedCall: ({ input }) =>
         Quota.withReservation(token, 1n, () =>
           Effect.succeed({
@@ -107,9 +105,8 @@ export const QuotaAgent = defineAgent({
           ),
           Effect.orDie,
         ),
-    };
   }),
-);
+});
 ```
 
 The second acquisition argument is the expected amount per reservation and is used for fair
@@ -185,7 +182,7 @@ const SummaryResult = Schema.Struct({
 });
 
 const summarize = method({
-  params: {
+  input: {
     text: Schema.String,
     token: Quota.QuotaToken,
   },
@@ -216,7 +213,7 @@ merge consumes the returned child token, so do not use it afterward.
 Resource updates affect running agents without changing their Effect code:
 
 ```shell
-golem resource update api-calls --limit '{"type":"rate","value":200,"period":"minute","max":2000}' --environment prod
+golem resource update api-calls --limit '{"type":"Rate","value":200,"period":"minute","max":2000}' --environment prod
 ```
 
 ## Key Constraints

@@ -5,7 +5,7 @@ description: "Creates ephemeral, stateless Effect Golem agents with fresh handle
 
 # Creating Ephemeral Agents with Effect
 
-An ephemeral agent gets a fresh implementation for every invocation. Its constructor parameters
+An ephemeral agent gets a fresh implementation for every invocation. Its agent id fields
 still describe its logical identity, but values captured by one invocation's handlers are discarded
 when that invocation completes. The oplog remains available for inspection, but Golem does not
 replay it to recover an ephemeral agent.
@@ -27,28 +27,29 @@ import { defineAgent, method } from "@golemcloud/effect-golem";
 export const TextProcessorAgent = defineAgent({
   name: "TextProcessorAgent",
   mode: "ephemeral",
-  constructorParams: {
+  id: {
     processorName: Schema.String,
   },
   methods: {
     toUpper: method({
-      params: { input: Schema.String },
+      input: { input: Schema.String },
       success: Schema.String,
     }),
     toLower: method({
-      params: { input: Schema.String },
+      input: { input: Schema.String },
       success: Schema.String,
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     toUpper: ({ input }) => Effect.succeed(input.toUpperCase()),
     toLower: ({ input }) => Effect.succeed(input.toLowerCase()),
   }),
-);
+});
 ```
 
-The `.implement(...)` call registers the agent eagerly when the module is evaluated. Import the
+The `.implement({ init, methods })` call registers the agent eagerly when the module is evaluated. Import the
 implementation module from the component entry point so registration occurs:
 
 ```typescript
@@ -64,11 +65,11 @@ Generated Effect projects use ESM and NodeNext module resolution, so local impor
 For every invocation, Golem:
 
 1. Starts a fresh ephemeral agent instance.
-2. Runs the `.implement(...)` Effect to obtain that instance's handlers.
+2. Runs `init` and then `methods` to obtain that instance's handlers.
 3. Runs the requested handler.
 4. Discards the instance and its captured in-memory values.
 
-Do not add `Snapshot.define(...)`, call `snapshot.init(...)`, or create mutable state merely to
+Do not add `Snapshot.define(...)` or create mutable state merely to
 represent a stateless handler. Omitting `snapshot` disables snapshotting. If calls must observe or
 update shared state, the agent is not stateless; use a durable agent and the normal snapshot-backed
 state pattern instead.
@@ -76,7 +77,7 @@ state pattern instead.
 ## Effect and CLI Conventions
 
 - Import Effect APIs from `effect` and Golem APIs from `@golemcloud/effect-golem`.
-- Use `Schema` values for constructor parameters, method parameters, successes, and typed errors.
+- Use `Schema` values for agent id fields, method parameters, successes, and typed errors.
 - Handlers receive named parameter records and return Effects; do not use plain `async` or
   Promise-returning handlers from the non-Effect TypeScript SDK.
 - Method names use TypeScript casing. For the example above, invoke `toUpper` and `toLower`, not
@@ -87,7 +88,7 @@ state pattern instead.
   `TextProcessorAgent("processor-1")`.
 - Ephemeral agents can still expose HTTP routes, call other agents, and use Golem host APIs;
   ephemeral mode changes instance lifetime and recovery, not the available capabilities.
-- Do not call a runner or registration helper. The top-level `.implement(...)` call plus the
+- Do not call a runner or registration helper. The top-level `.implement({ ... })` call plus the
   `src/main.ts` side-effect import is the registration path.
 
 ## Choosing Ephemeral Mode
