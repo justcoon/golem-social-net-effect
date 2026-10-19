@@ -32,6 +32,9 @@ Existing running agents are **not affected** by default — they continue runnin
 | `--full-diff` | Show the full deployment and environment setup diff instead of only changed entries |
 | `--version <VERSION>` | Roll the environment back to the deployment with this version label (see `golem-rollback`) |
 | `--revision <REVISION>` | Roll the environment back to the deployment with this revision (see `golem-rollback`) |
+| `--full-diff` | Show the full deployment and environment setup diff instead of only changed entries |
+| `--version <VERSION>` | Roll the environment back to the deployment with this version label (see `golem-rollback`) |
+| `--revision <REVISION>` | Roll the environment back to the deployment with this revision (see `golem-rollback`) |
 | `--force-build` | Skip modification-time based up-to-date checks |
 | `-u, --update-agents <MODE>` | Update existing agents: `automatic` or `manual` |
 | `--redeploy-agents` | Delete and recreate existing agents |

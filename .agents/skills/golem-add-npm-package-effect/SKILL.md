@@ -93,11 +93,6 @@ compatibility unless application source imports them into the component bundle.
 
 The generated build uses Rollup to resolve npm modules, convert CommonJS dependencies, support JSON
 imports, inline dynamic imports, and emit one ESM module. Ordinary third-party dependencies are
-bundled into that module, including `@golemcloud/effect-golem` and its database adapters. The
-template externalizes `effect`, `effect/http`, `agent-guest`, `node:sqlite`, and host modules with
-`golem:`, `wasi:`, or `wasm-rquickjs:` prefixes. The SDK component builder resolves other Effect
-subpaths against the embedded runtime while bundling and tree-shaking the SDK source. Do not
-externalize all SDK imports or add a second Effect runtime to the component.
 
 If the build fails, check the package's exports and prefer its ESM or runtime-compatible entry
 point. If the component fails only when invoked, look for a native addon, an unresolved Node

@@ -85,7 +85,7 @@ do not guess them from the component source.
 
 Create the external application outside the Golem component source. Add the generated package as
 a file dependency and install Effect v4. Keep the `effect` version exactly aligned with the root
-Effect component's `package.json` (the current SDK uses `4.0.0`):
+Effect component's `package.json` (the current SDK uses `4.0.0-rc.117`):
 
 ```json
 {
@@ -98,7 +98,7 @@ Effect component's `package.json` (the current SDK uses `4.0.0`):
   },
   "dependencies": {
     "counter-agent-client": "file:../bridge-sdk/ts/counter-agent-client",
-    "effect": "4.0.0"
+    "effect": "4.0.0-rc.117"
   },
   "devDependencies": {
     "@types/node": "^25",
