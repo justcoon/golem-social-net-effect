@@ -1,9 +1,10 @@
-import { Effect, Ref, Schema } from "effect";
+import { Effect, Ref, Schedule, Schema, Stream } from "effect";
 import {
   defineAgent,
   Http,
   method,
   Snapshot,
+  WitTypes,
 } from "@golemcloud/effect-golem";
 import { TimestampSchema } from "../common/types.js";
 import { parseQuery } from "../common/query.js";
@@ -175,6 +176,29 @@ export const UserTimelineUpdatesAgent = defineAgent({
         ),
       ],
     }),
+    getPostsUpdatesStream: method({
+      input: {
+        userId: Schema.String,
+        since: Schema.NullOr(Schema.String),
+        iterWaitTime: Schema.NullOr(Schema.Number),
+      },
+      success: WitTypes.AgentStream(TimelinePostRefSchema),
+      http: [
+        Http.get(
+          "/{userId}/timeline/posts/updates/stream?since={since}&iterWaitTime={iterWaitTime}",
+          {
+            durableStreams: {
+              slots: [
+                { source: "output", slot: "$result", name: "updates" },
+              ],
+              load: {
+                maxConcurrentReadersPerStream: 8,
+              },
+            },
+          },
+        ),
+      ],
+    }),
   },
 }).implement({
   init: () => Effect.void,
@@ -203,6 +227,48 @@ export const UserTimelineUpdatesAgent = defineAgent({
           "get posts updates",
         );
         return res;
+      }),
+
+    getPostsUpdatesStream: ({ userId, since, iterWaitTime }) =>
+      Effect.gen(function* () {
+        const context = yield* Effect.context<any>();
+        const interval = iterWaitTime ?? 1000;
+        const initialSince = since ?? getCurrentTimestamp().timestamp;
+        const cursorRef = yield* Ref.make(initialSince);
+
+        const pollEffect = Effect.scoped(
+          Effect.gen(function* () {
+            const currentSince = yield* Ref.get(cursorRef);
+            const uAgent = yield* UserTimelineAgent.client
+              .get({ id: userId })
+              .pipe(Effect.orDie);
+            const updates = yield* uAgent
+              .getUpdates({ updatesSince: { timestamp: currentSince } })
+              .pipe(Effect.orDie);
+
+            if (updates && updates.posts.length > 0) {
+              const latest = updates.posts.reduce(
+                (max, p) =>
+                  p.updatedAt.timestamp > max ? p.updatedAt.timestamp : max,
+                currentSince,
+              );
+              yield* Ref.set(cursorRef, latest);
+              return updates.posts as TimelinePostRef[];
+            }
+            return [] as TimelinePostRef[];
+          }),
+        ).pipe(Effect.provide(context));
+
+        const stream = Stream.fromEffectSchedule(
+          pollEffect,
+          Schedule.spaced(`${interval} millis`),
+        ).pipe(
+          Stream.flatMap((posts: TimelinePostRef[]) =>
+            Stream.fromIterable(posts),
+          ),
+        );
+
+        return stream;
       }),
   }),
 });
