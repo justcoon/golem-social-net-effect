@@ -1,9 +1,10 @@
-import { Effect, Ref, Schema } from "effect";
+import { Effect, Ref, Schedule, Schema, Stream } from "effect";
 import * as Result from "effect/Result";
 import {
   defineAgent,
   Http,
   method,
+  WitTypes,
 } from "@golemcloud/effect-golem";
 import {
   TimestampSchema,
@@ -259,6 +260,29 @@ export const UserChatsUpdatesAgent = defineAgent({
         ),
       ],
     }),
+    getChatsUpdatesStream: method({
+      input: {
+        userId: Schema.String,
+        since: Schema.NullOr(Schema.String),
+        iterWaitTime: Schema.NullOr(Schema.Number),
+      },
+      success: WitTypes.AgentStream(ChatRefSchema),
+      http: [
+        Http.get(
+          "/{userId}/chats/updates/stream?since={since}&iterWaitTime={iterWaitTime}",
+          {
+            durableStreams: {
+              slots: [
+                { source: "output", slot: "$result", name: "updates" },
+              ],
+              load: {
+                maxConcurrentReadersPerStream: 8,
+              },
+            },
+          },
+        ),
+      ],
+    }),
   },
 }).implement({
   init: () => Effect.void,
@@ -292,5 +316,45 @@ export const UserChatsUpdatesAgent = defineAgent({
           return res;
         }),
       ),
+
+    getChatsUpdatesStream: ({ userId, since, iterWaitTime }) =>
+      Effect.gen(function* () {
+        const context = yield* Effect.context<any>();
+        const interval = iterWaitTime ?? 1000;
+        const initialSince = since ?? getCurrentTimestamp().timestamp;
+        const cursorRef = yield* Ref.make(initialSince);
+
+        const pollEffect = Effect.scoped(
+          Effect.gen(function* () {
+            const currentSince = yield* Ref.get(cursorRef);
+            const uAgent = yield* UserChatsAgent.client
+              .get({ id: userId })
+              .pipe(Effect.orDie);
+            const updates = yield* uAgent
+              .getUpdates({ updatesSince: { timestamp: currentSince } })
+              .pipe(Effect.orDie);
+
+            if (updates && updates.chats.length > 0) {
+              const latest = updates.chats.reduce(
+                (max, c) =>
+                  c.updatedAt.timestamp > max ? c.updatedAt.timestamp : max,
+                currentSince,
+              );
+              yield* Ref.set(cursorRef, latest);
+              return updates.chats as ChatRef[];
+            }
+            return [] as ChatRef[];
+          }),
+        ).pipe(Effect.provide(context));
+
+        const stream = Stream.fromEffectSchedule(
+          pollEffect,
+          Schedule.spaced(`${interval} millis`),
+        ).pipe(
+          Stream.flatMap((chats: ChatRef[]) => Stream.fromIterable(chats)),
+        );
+
+        return stream;
+      }),
   }),
 });
