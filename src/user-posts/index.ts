@@ -181,46 +181,50 @@ export const UserPostsViewAgent = defineAgent({
   init: () => Effect.void,
   methods: () => ({
     getPostsView: ({ userId, query }) =>
-      Effect.gen(function* () {
-        const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
-        const userPosts = yield* postsAgent.getPosts({}).pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
+          const userPosts = yield* postsAgent.getPosts({}).pipe(Effect.orDie);
 
-        yield* Effect.logInfo(
-          `get posts view - user id: ${userId}, query: ${query}`,
-        );
+          yield* Effect.logInfo(
+            `get posts view - user id: ${userId}, query: ${query}`,
+          );
 
-        if (userPosts !== null) {
-          const parsedQuery = parseQuery(query);
-          const postIds = userPosts.posts.map((p) => p.postId);
-          if (postIds.length === 0) {
-            return [];
-          } else {
-            return yield* fetchPostsByIds(postIds, parsedQuery);
+          if (userPosts !== null) {
+            const parsedQuery = parseQuery(query);
+            const postIds = userPosts.posts.map((p) => p.postId);
+            if (postIds.length === 0) {
+              return [];
+            } else {
+              return yield* fetchPostsByIds(postIds, parsedQuery);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
 
     getPostsUpdatesView: ({ userId, since }) =>
-      Effect.gen(function* () {
-        const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
-        const updatesSince = since ? { timestamp: since } : getCurrentTimestamp();
-        const userPostsUpdates = yield* postsAgent.getUpdates({ updatesSince }).pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
+          const updatesSince = since ? { timestamp: since } : getCurrentTimestamp();
+          const userPostsUpdates = yield* postsAgent.getUpdates({ updatesSince }).pipe(Effect.orDie);
 
-        yield* Effect.logInfo(
-          `get posts updates view - user id: ${userId}, updates since: ${since}`,
-        );
+          yield* Effect.logInfo(
+            `get posts updates view - user id: ${userId}, updates since: ${since}`,
+          );
 
-        if (userPostsUpdates !== null) {
-          const postIds = userPostsUpdates.posts.map((p) => p.postId);
-          if (postIds.length === 0) {
-            return [];
-          } else {
-            return yield* fetchPostsByIds(postIds, undefined);
+          if (userPostsUpdates !== null) {
+            const postIds = userPostsUpdates.posts.map((p) => p.postId);
+            if (postIds.length === 0) {
+              return [];
+            } else {
+              return yield* fetchPostsByIds(postIds, undefined);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
   }),
 });
 

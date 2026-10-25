@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@golemcloud/effect-golem": "2.0.0",
+    "@golemcloud/effect-golem": "2.0.1",
     "effect": "4.0.0"
   },
   "devDependencies": {

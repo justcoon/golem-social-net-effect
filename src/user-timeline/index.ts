@@ -102,56 +102,60 @@ export const UserTimelineViewAgent = defineAgent({
   init: () => Effect.void,
   methods: () => ({
     getPostsView: ({ userId, query }) =>
-      Effect.gen(function* () {
-        const uTimelineAgent = yield* UserTimelineAgent.client
-          .get({ id: userId })
-          .pipe(Effect.orDie);
-        const timelinePosts = yield* uTimelineAgent
-          .getTimeline({})
-          .pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uTimelineAgent = yield* UserTimelineAgent.client
+            .get({ id: userId })
+            .pipe(Effect.orDie);
+          const timelinePosts = yield* uTimelineAgent
+            .getTimeline({})
+            .pipe(Effect.orDie);
 
-        yield* Effect.logInfo(`get posts view - user id: ${userId}, query: ${query}`);
+          yield* Effect.logInfo(`get posts view - user id: ${userId}, query: ${query}`);
 
-        if (timelinePosts !== null) {
-          const parsedQuery = parseQuery(query);
+          if (timelinePosts !== null) {
+            const parsedQuery = parseQuery(query);
 
-          const postIds = timelinePosts.posts
-            .filter((p) => matchesPostRef(p, parsedQuery))
-            .map((p) => p.postId);
+            const postIds = timelinePosts.posts
+              .filter((p) => matchesPostRef(p, parsedQuery))
+              .map((p) => p.postId);
 
-          if (postIds.length === 0) {
-            return [];
-          } else {
-            return yield* fetchPostsByIds(postIds, parsedQuery);
+            if (postIds.length === 0) {
+              return [];
+            } else {
+              return yield* fetchPostsByIds(postIds, parsedQuery);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
 
     getPostsUpdatesView: ({ userId, updatesSince }) =>
-      Effect.gen(function* () {
-        const uTimelineAgent = yield* UserTimelineAgent.client
-          .get({ id: userId })
-          .pipe(Effect.orDie);
-        const timelineUpdates = yield* uTimelineAgent
-          .getUpdates({ updatesSince })
-          .pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uTimelineAgent = yield* UserTimelineAgent.client
+            .get({ id: userId })
+            .pipe(Effect.orDie);
+          const timelineUpdates = yield* uTimelineAgent
+            .getUpdates({ updatesSince })
+            .pipe(Effect.orDie);
 
-        yield* Effect.logInfo(
-          `get posts updates view - user id: ${userId}, updates since: ${updatesSince.timestamp}`,
-        );
+          yield* Effect.logInfo(
+            `get posts updates view - user id: ${userId}, updates since: ${updatesSince.timestamp}`,
+          );
 
-        if (timelineUpdates !== null) {
-          const postIds = timelineUpdates.posts.map((p) => p.postId);
+          if (timelineUpdates !== null) {
+            const postIds = timelineUpdates.posts.map((p) => p.postId);
 
-          if (postIds.length === 0) {
-            return [];
-          } else {
-            return yield* fetchPostsByIds(postIds, undefined);
+            if (postIds.length === 0) {
+              return [];
+            } else {
+              return yield* fetchPostsByIds(postIds, undefined);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
   }),
 });
 
@@ -180,29 +184,33 @@ export const UserTimelineUpdatesAgent = defineAgent({
   init: () => Effect.void,
   methods: () => ({
     getPostsUpdates: ({ userId, since, iterWaitTime, maxWaitTime }) =>
-      Effect.gen(function* () {
-        const uSince = since ? { timestamp: since } : undefined;
-        const iWait = iterWaitTime ?? undefined;
-        const mWait = maxWaitTime ?? undefined;
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uSince = since ? { timestamp: since } : undefined;
+          const iWait = iterWaitTime ?? undefined;
+          const mWait = maxWaitTime ?? undefined;
 
-        const res = yield* pollForUpdates<TimelinePostRef>(
-          userId,
-          uSince,
-          iWait,
-          mWait,
-          (uid, sinceTime) =>
-            Effect.gen(function* () {
-              const uAgent = yield* UserTimelineAgent.client
-                .get({ id: uid })
-                .pipe(Effect.orDie);
-              const updates = yield* uAgent
-                .getUpdates({ updatesSince: sinceTime })
-                .pipe(Effect.orDie);
-              return updates ? [...updates.posts] : null;
-            }),
-          "get posts updates",
-        );
-        return res;
-      }),
+          const res = yield* pollForUpdates<TimelinePostRef>(
+            userId,
+            uSince,
+            iWait,
+            mWait,
+            (uid, sinceTime) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const uAgent = yield* UserTimelineAgent.client
+                    .get({ id: uid })
+                    .pipe(Effect.orDie);
+                  const updates = yield* uAgent
+                    .getUpdates({ updatesSince: sinceTime })
+                    .pipe(Effect.orDie);
+                  return updates ? [...updates.posts] : null;
+                }),
+              ),
+            "get posts updates",
+          );
+          return res;
+        }),
+      ),
   }),
 });

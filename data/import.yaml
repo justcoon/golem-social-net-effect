@@ -5,7 +5,7 @@ concurrency: 1
 rampup: 1
 
 plan:
-  - name: Create users, index {{ index }}
+  - name: Set user names, index {{ index }}
     request:
       url: /v1/social-net/users/{{ item.userId }}/name
       method: PUT
@@ -15,7 +15,19 @@ plan:
         Content-Type: 'application/json'
         Accept: 'application/json'
     with_items_from_csv:
-      file_name: ./fixtures/users.csv
+      file_name: ./fixtures/users_name.csv
+      quote_char: "'"
+  - name: Set user emails, index {{ index }}
+    request:
+      url: /v1/social-net/users/{{ item.userId }}/email
+      method: PUT
+      body: '{{ item.body }}'
+      headers:
+        host: '{{ API_HOST }}'
+        Content-Type: 'application/json'
+        Accept: 'application/json'
+    with_items_from_csv:
+      file_name: ./fixtures/users_email.csv
       quote_char: "'"
   - name: Add user friends, index {{ index }}
     request:
