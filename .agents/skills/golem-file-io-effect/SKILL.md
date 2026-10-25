@@ -27,21 +27,22 @@ import { defineAgent, method } from "@golemcloud/effect-golem";
 export const ProvisionedFileAgent = defineAgent({
   name: "ProvisionedFileAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   methods: {
     readConfig: method({
-      params: {},
+      input: {},
       success: Schema.String,
     }),
     fileStats: method({
-      params: {},
+      input: {},
       success: Schema.String,
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     readConfig: () =>
       Effect.promise(() => readFile("/data/config.json", "utf8")),
 
@@ -54,7 +55,7 @@ export const ProvisionedFileAgent = defineAgent({
         }),
       ),
   }),
-);
+});
 ```
 
 Register the implementation from the component entry point:

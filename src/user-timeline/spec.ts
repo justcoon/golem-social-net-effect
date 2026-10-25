@@ -10,24 +10,24 @@ import {
 export const UserTimelineAgent = defineAgent({
   name: "UserTimelineAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.String,
   },
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Schema.NullOr(UserTimelineSchema),
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     getTimeline: method({
-      params: {},
+      input: {},
       success: Schema.NullOr(UserTimelineSchema),
     }),
     getUpdates: method({
-      params: { updatesSince: TimestampSchema },
+      input: { updatesSince: TimestampSchema },
       success: Schema.NullOr(UserTimelineUpdatesSchema),
     }),
     postsUpdated: method({
-      params: { posts: Schema.Array(TimelinePostRefSchema) },
+      input: { posts: Schema.Array(TimelinePostRefSchema) },
       success: Schema.Void,
     }),
   },

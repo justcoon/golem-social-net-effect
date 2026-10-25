@@ -15,6 +15,7 @@ import { ChatSchema, Chat, ChatAgent } from "../chat/index.js";
 import {
   ChatRefSchema,
   ChatRef,
+  UserChats,
   initUserChatsState,
   addUserChat,
   updateUserChat,
@@ -27,50 +28,54 @@ import { UserChatsAgent } from "./spec.js";
 export * from "./schema.js";
 export * from "./spec.js";
 
-UserChatsAgent.implement(({ id }, snapshot) =>
-  Effect.gen(function* () {
-    const state = yield* snapshot.init(null);
-
+UserChatsAgent.implement({
+  init: ({ id }) =>
+    Ref.make<UserChats | null>(null).pipe(
+      Effect.map((ref) => ({ id, ref })),
+    ),
+  methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
-      let current = yield* Ref.get(state);
+      let current = yield* Ref.get(ref);
       if (current === null) {
         current = initUserChatsState(id, getCurrentTimestamp());
-        yield* Ref.set(state, current);
+        yield* Ref.set(ref, current);
       }
       return current;
     });
 
     return {
-      getChats: () => Ref.get(state),
+      getChats: () => Ref.get(ref),
 
       createChat: ({ participants }) =>
-        Effect.gen(function* () {
-          const s = yield* getOrInitState;
-          const chatId = crypto.randomUUID();
-          yield* Effect.logInfo(
-            `create chat - chat id: ${chatId}, created by: ${s.userId}, participants: ${participants.length}`,
-          );
+        Effect.scoped(
+          Effect.gen(function* () {
+            const s = yield* getOrInitState;
+            const chatId = crypto.randomUUID();
+            yield* Effect.logInfo(
+              `create chat - chat id: ${chatId}, created by: ${s.userId}, participants: ${participants.length}`,
+            );
 
-          const now = getCurrentTimestamp();
-          const { updatedState, chatRef } = addUserChat(s, chatId, s.userId, now);
-          yield* Ref.set(state, updatedState);
+            const now = getCurrentTimestamp();
+            const { updatedState, chatRef } = addUserChat(s, chatId, s.userId, now);
+            yield* Ref.set(ref, updatedState);
 
-          const chatAgent = yield* ChatAgent.client
-            .get({ id: chatId })
-            .pipe(Effect.orDie);
-          yield* chatAgent.initChat
-            .trigger({
-              participantsIds: participants,
-              createdBy: s.userId,
-              createdAt: now,
-            })
-            .pipe(Effect.orDie);
+            const chatAgent = yield* ChatAgent.client
+              .get({ id: chatId })
+              .pipe(Effect.orDie);
+            yield* chatAgent.initChat
+              .trigger({
+                participantsIds: participants,
+                createdBy: s.userId,
+                createdAt: now,
+              })
+              .pipe(Effect.orDie);
 
-          return chatRef;
-        }),
+            return chatRef;
+          }),
+        ),
 
       getUpdates: ({ updatesSince }) =>
-        Ref.get(state).pipe(
+        Ref.get(ref).pipe(
           Effect.map((s) => {
             if (s !== null) {
               const updates = s.chats.filter(
@@ -97,7 +102,7 @@ UserChatsAgent.implement(({ id }, snapshot) =>
             yield* Effect.logInfo(`chat updated - chat id: ${chatId} - chat not found`);
             return yield* Effect.fail(res.failure);
           }
-          yield* Ref.set(state, res.success);
+          yield* Ref.set(ref, res.success);
         }),
 
       addChat: ({ chatId, createdBy, createdAt }) =>
@@ -107,7 +112,7 @@ UserChatsAgent.implement(({ id }, snapshot) =>
             `add chat - chat id: ${chatId}, created by: ${createdBy}, created at: ${createdAt.timestamp}`,
           );
           const updatedState = addExistingChat(s, chatId, createdBy, createdAt, getCurrentTimestamp());
-          yield* Ref.set(state, updatedState);
+          yield* Ref.set(ref, updatedState);
         }),
 
       removeChat: ({ chatId }) =>
@@ -115,44 +120,51 @@ UserChatsAgent.implement(({ id }, snapshot) =>
           const s = yield* getOrInitState;
           yield* Effect.logInfo(`remove chat - chat id: ${chatId}`);
           const updatedState = removeUserChat(s, chatId, getCurrentTimestamp());
-          yield* Ref.set(state, updatedState);
+          yield* Ref.set(ref, updatedState);
         }),
     };
-  }),
-);
+  },
+  snapshot: {
+    save: (state) => Ref.get(state.ref),
+    restore: (saved, context) =>
+      Ref.make(saved).pipe(Effect.map((ref) => ({ id: context.id.id, ref }))),
+  },
+});
 
 export function fetchChatsByIds(
   chatIds: string[],
   query?: Query,
 ): Effect.Effect<Chat[], any, any> {
-  return Effect.gen(function* () {
-    const results: Chat[] = [];
-    const chunks = arrayChunks(chatIds, 10);
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const results: Chat[] = [];
+      const chunks = arrayChunks(chatIds, 10);
 
-    for (const chunk of chunks) {
-      for (const id of chunk) {
-        const chatAgent = yield* ChatAgent.client.get({ id }).pipe(Effect.orDie);
-        const c = query
-          ? yield* chatAgent.getChatIfMatch({ query }).pipe(Effect.orDie)
-          : yield* chatAgent.getChat({}).pipe(Effect.orDie);
-        if (c !== null) {
-          results.push(c);
+      for (const chunk of chunks) {
+        for (const id of chunk) {
+          const chatAgent = yield* ChatAgent.client.get({ id }).pipe(Effect.orDie);
+          const c = query
+            ? yield* chatAgent.getChatIfMatch({ query }).pipe(Effect.orDie)
+            : yield* chatAgent.getChat({}).pipe(Effect.orDie);
+          if (c !== null) {
+            results.push(c);
+          }
         }
       }
-    }
 
-    return results;
-  });
+      return results;
+    }),
+  );
 }
 
 export const UserChatsViewAgent = defineAgent({
   name: "UserChatsViewAgent",
   mode: "ephemeral",
-  constructorParams: {},
+  id: {},
   http: Http.mount("/v1/social-net/users"),
   methods: {
     getChatsView: method({
-      params: {
+      input: {
         userId: Schema.String,
         query: Schema.String,
       },
@@ -160,76 +172,81 @@ export const UserChatsViewAgent = defineAgent({
       http: [Http.get("/{userId}/chats/search?query={query}")],
     }),
     getChatsUpdatesView: method({
-      params: {
+      input: {
         userId: Schema.String,
         updatesSince: TimestampSchema,
       },
       success: Schema.NullOr(Schema.Array(ChatSchema)),
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     getChatsView: ({ userId, query }) =>
-      Effect.gen(function* () {
-        const uAgent = yield* UserChatsAgent.client
-          .get({ id: userId })
-          .pipe(Effect.orDie);
-        const userChats = yield* uAgent.getChats({}).pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uAgent = yield* UserChatsAgent.client
+            .get({ id: userId })
+            .pipe(Effect.orDie);
+          const userChats = yield* uAgent.getChats({}).pipe(Effect.orDie);
 
-        yield* Effect.logInfo(`get chats view - user id: ${userId}, query: ${query}`);
+          yield* Effect.logInfo(`get chats view - user id: ${userId}, query: ${query}`);
 
-        if (userChats !== null) {
-          const parsedQuery = parseQuery(query);
-          const chatRefs = userChats.chats;
-          const chatIds = chatRefs
-            .filter((chatRef) => chatRefMatchesQuery(chatRef, parsedQuery))
-            .map((p) => p.chatId);
+          if (userChats !== null) {
+            const parsedQuery = parseQuery(query);
+            const chatRefs = userChats.chats;
+            const chatIds = chatRefs
+              .filter((chatRef) => chatRefMatchesQuery(chatRef, parsedQuery))
+              .map((p) => p.chatId);
 
-          if (chatIds.length === 0) {
-            return [];
-          } else {
-            return yield* fetchChatsByIds(chatIds, parsedQuery);
+            if (chatIds.length === 0) {
+              return [];
+            } else {
+              return yield* fetchChatsByIds(chatIds, parsedQuery);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
 
     getChatsUpdatesView: ({ userId, updatesSince }) =>
-      Effect.gen(function* () {
-        const uAgent = yield* UserChatsAgent.client
-          .get({ id: userId })
-          .pipe(Effect.orDie);
-        const userChatsUpdates = yield* uAgent
-          .getUpdates({ updatesSince })
-          .pipe(Effect.orDie);
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uAgent = yield* UserChatsAgent.client
+            .get({ id: userId })
+            .pipe(Effect.orDie);
+          const userChatsUpdates = yield* uAgent
+            .getUpdates({ updatesSince })
+            .pipe(Effect.orDie);
 
-        yield* Effect.logInfo(
-          `get chats updates view - user id: ${userId}, updates since: ${updatesSince.timestamp}`,
-        );
+          yield* Effect.logInfo(
+            `get chats updates view - user id: ${userId}, updates since: ${updatesSince.timestamp}`,
+          );
 
-        if (userChatsUpdates !== null) {
-          const updatedChatRefs = userChatsUpdates.chats;
+          if (userChatsUpdates !== null) {
+            const updatedChatRefs = userChatsUpdates.chats;
 
-          if (updatedChatRefs.length === 0) {
-            return [];
-          } else {
-            const chatIds = updatedChatRefs.map((p) => p.chatId);
-            return yield* fetchChatsByIds(chatIds);
+            if (updatedChatRefs.length === 0) {
+              return [];
+            } else {
+              const chatIds = updatedChatRefs.map((p) => p.chatId);
+              return yield* fetchChatsByIds(chatIds);
+            }
           }
-        }
-        return null;
-      }),
+          return null;
+        }),
+      ),
   }),
-);
+});
 
 export const UserChatsUpdatesAgent = defineAgent({
   name: "UserChatsUpdatesAgent",
   mode: "ephemeral",
-  constructorParams: {},
+  id: {},
   http: Http.mount("/v1/social-net/users"),
   methods: {
     getChatsUpdates: method({
-      params: {
+      input: {
         userId: Schema.String,
         since: Schema.NullOr(Schema.String),
         iterWaitTime: Schema.NullOr(Schema.Number),
@@ -243,32 +260,37 @@ export const UserChatsUpdatesAgent = defineAgent({
       ],
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     getChatsUpdates: ({ userId, since, iterWaitTime, maxWaitTime }) =>
-      Effect.gen(function* () {
-        const uSince = since ? { timestamp: since } : undefined;
-        const iWait = iterWaitTime ?? undefined;
-        const mWait = maxWaitTime ?? undefined;
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uSince = since ? { timestamp: since } : undefined;
+          const iWait = iterWaitTime ?? undefined;
+          const mWait = maxWaitTime ?? undefined;
 
-        const res = yield* pollForUpdates<ChatRef>(
-          userId,
-          uSince,
-          iWait,
-          mWait,
-          (uid, sinceTime) =>
-            Effect.gen(function* () {
-              const uAgent = yield* UserChatsAgent.client
-                .get({ id: uid })
-                .pipe(Effect.orDie);
-              const updates = yield* uAgent
-                .getUpdates({ updatesSince: sinceTime })
-                .pipe(Effect.orDie);
-              return updates ? [...updates.chats] : null;
-            }),
-          "get chats updates",
-        );
-        return res;
-      }),
+          const res = yield* pollForUpdates<ChatRef>(
+            userId,
+            uSince,
+            iWait,
+            mWait,
+            (uid, sinceTime) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const uAgent = yield* UserChatsAgent.client
+                    .get({ id: uid })
+                    .pipe(Effect.orDie);
+                  const updates = yield* uAgent
+                    .getUpdates({ updatesSince: sinceTime })
+                    .pipe(Effect.orDie);
+                  return updates ? [...updates.chats] : null;
+                }),
+              ),
+            "get chats updates",
+          );
+          return res;
+        }),
+      ),
   }),
-);
+});

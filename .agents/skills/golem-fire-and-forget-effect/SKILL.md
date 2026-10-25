@@ -14,9 +14,9 @@ has a `.trigger(input)` form for this purpose.
 Obtain the typed remote handle and yield the trigger Effect:
 
 ```typescript
-const counter = yield* CounterAgent.client.get({ name: "my-counter" });
+const counter = yield* Counter.client.get({ name: "my-counter" });
 
-// A method declared with params: {} still requires an empty named-input record.
+// A method declared with input: {} still requires an empty named-input record.
 yield* counter.increment.trigger({});
 ```
 
@@ -34,7 +34,7 @@ invent a separate client helper.
 
 ## Semantics
 
-`remote.method.trigger(input)` returns `Effect.Effect<void, RemoteCallError>`:
+For a durable target, `remote.method.trigger(input)` returns `Effect.Effect<void, RemoteCallError>`:
 
 - success means the Golem host accepted the invocation;
 - it does not wait for the remote method to finish or return its success value;
@@ -42,9 +42,15 @@ invent a separate client helper.
 - request encoding or submission can still fail with `RemoteCallError`;
 - after acceptance, there is no caller-side cancellation handle.
 
+Ephemeral targets return invocation metadata from `trigger`, rather than `void`. Stream-bearing
+methods (streams in either inputs or outputs) are awaited-only: trigger and schedule reject them.
+Use the normal awaited call to consume or supply streams.
+
 Handle the client and submission errors when the calling method exposes a matching typed error. If
-an infrastructure failure should fail and durably retry a caller method whose contract has no error
-schema, convert those errors to defects around the composed operation:
+an unexpected infrastructure failure should fail a caller method whose contract has no error
+schema, convert those errors to defects around the composed operation. `Effect.orDie` does not
+guarantee durable retry: deterministic or permanent traps can bypass retry policy. Configure host
+retry policy for retryable failures, or use explicit guest recovery for application-level attempts.
 
 ```typescript
 runTest: () =>
@@ -52,7 +58,7 @@ runTest: () =>
     const callback = yield* Callback.client.get({ name });
     yield* callback.run.trigger({});
     return yield* incrementLocalState;
-  }).pipe(Effect.orDie),
+  }).pipe(Effect.scoped, Effect.orDie),
 ```
 
 Do not use `Effect.fork` as a substitute for `.trigger()`: an awaited remote invocation forked into
@@ -98,14 +104,18 @@ The typed client is attached to the value returned by `defineAgent(...)`. Import
 agent spec to access `.client`. For agents shared across components or involved in module cycles,
 keep the spec and implementation separate:
 
-- `agents/CounterAgent.ts` exports the `defineAgent(...)` spec without calling `.implement(...)`;
-- `agents/CounterAgent.impl.ts` imports the spec and calls `CounterAgent.implement(...)`;
-- the hosting component's `src/main.ts` imports `CounterAgent.impl.js` for registration;
-- RPC callers import only `CounterAgent.js`, avoiding implementation side effects.
+- `agents/Counter.ts` exports the `defineAgent(...)` spec without implementing it;
+- `agents/Counter.impl.ts` imports the spec and calls `Counter.implement({ init, methods })`;
+- the hosting component's `src/main.ts` imports `Counter.impl.js` for registration;
+- RPC callers import only `Counter.js`, avoiding implementation side effects.
 
-Use emitted `.js` suffixes for local imports in generated Effect projects. There is no public SDK
-helper that creates this typed client from a component URI or an arbitrary `AgentId`; use the
-imported agent definition's `.client`.
+Use emitted `.js` suffixes for local imports in generated Effect projects. To bind an encoded
+identity, use `AgentIdentity.parse` followed by `identity.client(Target)` or
+`Client.bind(identity, Target)`. Binding validates a full definition's type name and constructor
+schema and rejects existing-identity binding for ephemeral definitions. Handle binding errors too.
+For a separately deployed component, declare `dependencies.agents` in `golem.yaml`, run
+`golem build`, and import its generated Effect guest client; see
+[`golem-call-another-agent-effect`](../golem-call-another-agent-effect/SKILL.md).
 
 ## When to Use
 
@@ -123,5 +133,5 @@ This skill covers agent-to-agent calls in Effect code. From the CLI, `--trigger`
 fire-and-forget invocation; Effect applications use TypeScript casing and value syntax:
 
 ```shell
-golem agent invoke --trigger 'CounterAgent("my-counter")' increment
+golem agent invoke --trigger 'Counter("my-counter")' increment
 ```

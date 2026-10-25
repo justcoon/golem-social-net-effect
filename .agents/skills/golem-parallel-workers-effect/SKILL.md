@@ -33,35 +33,37 @@ const Numbers = Schema.Array(Schema.Number);
 export const Worker = defineAgent({
   name: "Worker",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.Number,
   },
   methods: {
     compute: method({
-      params: { value: Schema.Number },
+      input: { value: Schema.Number },
       success: Schema.Number,
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     compute: ({ value }) => Effect.succeed(value * 2),
   }),
-);
+});
 
 export const Coordinator = defineAgent({
   name: "Coordinator",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   methods: {
     fanOut: method({
-      params: { items: Numbers },
+      input: { items: Numbers },
       success: Numbers,
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     fanOut: ({ items }) =>
       Effect.all(
         items.map((value, id) =>
@@ -73,7 +75,7 @@ export const Coordinator = defineAgent({
         { concurrency: "unbounded" },
       ).pipe(Effect.orDie),
   }),
-);
+});
 ```
 
 `Worker.client.get({ id })` and `worker.compute({ value })` both return lazy Effects. `Effect.all`
@@ -192,7 +194,8 @@ JavaScript `Promise`; this SDK version does not export a ready-made Effect Schem
 
 `Agents.fork` is an Effect value that asks Golem to clone the current agent at the current execution
 point. Both agents resume from it: the source sees `tag: "original"`, and the clone sees
-`tag: "forked"`. This is different from `Effect.forkChild`.
+`tag: "forked"`. Only a durable agent can fork, and the clone is durable too. This is different from
+`Effect.forkChild`.
 
 Use a host-backed Golem promise created before the fork to return data from the cloned agent:
 

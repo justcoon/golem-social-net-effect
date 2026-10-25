@@ -40,17 +40,18 @@ export const SecureAgent = defineAgent({
   name: "SecureAgent",
   mode: "durable",
   config: SecureAgentConfig,
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   methods: {
     getInfo: method({
-      params: {},
+      input: {},
       success: Info,
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     getInfo: () =>
       Effect.gen(function* () {
         const config = yield* SecureAgentConfig;
@@ -62,10 +63,14 @@ export const SecureAgent = defineAgent({
           // Reveal only long enough to derive the non-secret result.
           apiKeyPrefix: Redacted.value(apiKey).slice(0, 4),
         };
-      }),
+      }).pipe(Effect.orDie),
   }),
-);
+});
 ```
+
+Config and secret reads can fail with `ConfigError`. The success-only handler uses `Effect.orDie`
+for unexpected infrastructure failures. To expose a recoverable error, declare an `error` schema
+and map the failure to that domain type. Defects fail the invocation; they do not guarantee retry.
 
 Register the implementation from the component entry point:
 
@@ -160,20 +165,27 @@ and consistency of an external secret update remain host concerns.
 ## Managing Secrets with the CLI
 
 Effect components use TypeScript casing and value syntax. Config paths retain camelCase, and
-string values passed through the shell include the TypeScript string literal quotes:
+`string` secret values can be passed as plain shell strings:
 
 ```shell
 # Create secret values in the current environment
-golem secret create apiKey --secret-type string --secret-value '"sk-abc123"'
-golem secret create database.password --secret-type string --secret-value '"s3cret"'
+golem secret create apiKey --type string --value "sk-abc123"
+golem secret create database.password --type string --value "s3cret"
 
-# List, update, and delete
+# Without a value option the value is prompted for (hidden input); or pipe it in
+printenv DB_PASSWORD | golem secret create database.password --type string --value-stdin
+
+# Create, or update the value if the secret already exists
+golem secret create apiKey --type string --value "sk-abc123" --update-existing
+
+# List, update, clear, and delete (delete asks for confirmation; --yes skips it)
 golem secret list
-golem secret update-value apiKey --secret-value '"new-value"'
+golem secret update apiKey --value "new-value"
+golem secret update apiKey --unset
 golem secret delete apiKey
 ```
 
-For `update-value` and `delete`, `--id <uuid>` can be used instead of the positional path.
+For `update` and `delete`, `--id <uuid>` can be used instead of the positional path.
 
 ## Defaults in `golem.yaml`
 
@@ -202,7 +214,7 @@ the CLI rather than checking them into the manifest.
   `Schema.Struct` is not a valid `config` value.
 - Do not use `Config<T>` or `Secret<T>` from the plain TypeScript SDK; Effect agents use
   `defineConfig`, `Schema.Redacted`, and Effect `Redacted`.
-- Config is not a positional `.implement(...)` argument. Yield the config service in an Effect.
+- Config is not an `init` argument. Yield the config service in an Effect.
 - Regular fields are field Effects; secret fields provide a `.get` Effect that yields a redacted
   value.
 - Secret paths retain TypeScript camelCase and are scoped per environment, not per agent instance.

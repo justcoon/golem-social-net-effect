@@ -22,7 +22,7 @@ components:
   my-app:service:
     plugins:
       - name: golem-otlp-exporter
-        version: "1.5.0"
+        version: "1.5.8"
         parameters:
           endpoint: "http://localhost:4318"
           signals: "traces,logs,metrics"
@@ -61,17 +61,18 @@ import { defineAgent, method } from "@golemcloud/effect-golem";
 export const TracedAgent = defineAgent({
   name: "TracedAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     instanceName: Schema.String,
   },
   methods: {
     doTracedWork: method({
-      params: { taskName: Schema.String },
+      input: { taskName: Schema.String },
       success: Schema.String,
     }),
   },
-}).implement(({ instanceName }) =>
-  Effect.succeed({
+}).implement({
+  init: ({ instanceName }) => Effect.succeed(instanceName),
+  methods: (instanceName) => ({
     doTracedWork: ({ taskName }) =>
       Effect.gen(function* () {
         yield* Effect.logInfo(`processing: ${taskName}`).pipe(
@@ -85,7 +86,7 @@ export const TracedAgent = defineAgent({
         }),
       ),
   }),
-);
+});
 ```
 
 Import the implemented agent module from `src/main.ts` so its top-level registration runs:
@@ -141,32 +142,43 @@ When `metrics` is included in `signals`, the exporter sends Golem runtime metric
 
 | Metric                           | Type    | Description                       |
 | -------------------------------- | ------- | --------------------------------- |
-| `golem_invocation_count`         | Counter | Agent method invocations          |
-| `golem_invocation_duration_ns`   | Counter | Invocation duration               |
-| `golem_invocation_fuel_consumed` | Counter | Fuel consumed by invocations      |
-| `golem_invocation_pending_count` | Counter | Pending invocations               |
-| `golem_host_call_count`          | Counter | Internal host calls               |
-| `golem_log_count`                | Counter | Emitted log entries               |
-| `golem_memory_initial_bytes`     | Gauge   | Initially allocated memory        |
-| `golem_memory_total_bytes`       | Gauge   | Total allocated memory            |
-| `golem_memory_growth_bytes`      | Counter | Memory growth since start         |
-| `golem_component_size_bytes`     | Gauge   | Component size                    |
-| `golem_error_count`              | Counter | Recorded errors                   |
-| `golem_interruption_count`       | Counter | Interrupt requests                |
-| `golem_exit_count`               | Counter | Process exit signals              |
-| `golem_restart_count`            | Counter | Fresh state creations             |
-| `golem_resources_created`        | Counter | Internal resources created        |
-| `golem_resources_dropped`        | Counter | Internal resources dropped        |
-| `golem_resources_active`         | Gauge   | Active internal resources         |
-| `golem_update_success_count`     | Counter | Successful updates                |
-| `golem_update_failure_count`     | Counter | Failed updates                    |
-| `golem_transaction_committed`    | Counter | Committed database transactions   |
-| `golem_transaction_rolled_back`  | Counter | Rolled-back database transactions |
-| `golem_snapshot_size_bytes`      | Counter | Snapshot size                     |
-| `golem_oplog_processor_lag`      | Gauge   | Oplog processor delivery lag      |
+| `golem.invocation.count`         | Counter | Agent method invocations          |
+| `golem.invocation.duration_ns`   | Counter | Invocation duration               |
+| `golem.invocation.fuel_consumed` | Counter | Fuel consumed by invocations      |
+| `golem.invocation.pending_count` | Counter | Queued invocation requests, not current queue depth |
+| `golem.host_call.count`          | Counter | Internal host calls               |
+| `golem.log.count`                | Counter | Emitted log entries               |
+| `golem.memory.initial_bytes`     | Gauge   | Initially allocated memory        |
+| `golem.memory.total_bytes`       | Gauge   | Total allocated memory            |
+| `golem.memory.growth_bytes`      | Counter | Memory growth since start         |
+| `golem.component.size_bytes`     | Gauge   | Component size                    |
+| `golem.error.count`              | Counter | Recorded errors                   |
+| `golem.interruption.count`       | Counter | Interrupt requests                |
+| `golem.exit.count`               | Counter | Process exit signals              |
+| `golem.restart.count`            | Counter | Fresh state creations             |
+| `golem.resources.created`        | Counter | Internal resources created        |
+| `golem.resources.dropped`        | Counter | Internal resources dropped        |
+| `golem.resources.active`         | Gauge   | Active internal resources         |
+| `golem.update.success_count`     | Counter | Successful updates                |
+| `golem.update.failure_count`     | Counter | Failed updates                    |
+| `golem.transaction.committed`    | Counter | Committed remote transactions     |
+| `golem.transaction.rolled_back`  | Counter | Rolled-back remote transactions   |
+| `golem.snapshot.size_bytes`      | Counter | Snapshot size                     |
+| `golem.oplog_processor.lag`      | Gauge   | Oplog processor delivery lag      |
 
 Metrics include `service.name`, `golem.agent.id`, `golem.component.id`, and
 `golem.component.version` attributes.
+
+These are emitted OTLP names. A collector or Prometheus backend can normalize dots to underscores
+and add suffixes; use the backend's observed names when writing queries, not as the exporter contract.
+
+## Export Semantics
+
+- Durable `Start`, `End`, and `Cancelled` metadata drives span lifecycle. Long-lived spans retain their origin trace across invocations; failed or retrying attempts do not prematurely close the logical span. Logs use their recorded trace context.
+- Stream summaries use bounded event/outcome metric labels and aggregate item counts; they do not emit a span per item. Active resource and memory values are gauges, and metric labels avoid resource IDs and payload values.
+- In `agent-type` service-name mode, `service.name` excludes constructor parameters and phantom instance IDs; `golem.agent.id` remains the full identity.
+- Collector export is best effort. Accepted source state advances when a send fails, and traces, logs, and metrics are still attempted independently. Exactly-once plugin batch delivery is not exactly-once collector delivery.
+- Fork/revert cannot retract telemetry already accepted by a collector. Source deletion does not provide a terminal signal, so no successful close is invented. Switching plugin instances can lose open-span state; continuity is deferred to GOL-667.
 
 ## Local Observability Stack
 
@@ -181,23 +193,25 @@ port 3000. Point the plugin's `endpoint` at `http://localhost:4318`.
 
 ## Per-Environment Configuration
 
-Use presets when collector configuration differs by environment:
+Use an environment preset when collector configuration differs by environment. The reserved
+`app-env:production` name applies only to the `production` environment and does not become the
+default custom preset for local deployments:
 
 ```yaml
 components:
   my-app:service:
     plugins:
       - name: golem-otlp-exporter
-        version: "1.5.0"
+        version: "1.5.8"
         parameters:
           endpoint: "http://localhost:4318"
           signals: "traces,logs,metrics"
     presets:
-      production:
+      app-env:production:
         pluginsMergeMode: replace
         plugins:
           - name: golem-otlp-exporter
-            version: "1.5.0"
+            version: "1.5.8"
             parameters:
               endpoint: "https://otel.prod.example.com:4318"
               headers: "x-api-key={{ OTLP_API_KEY }}"

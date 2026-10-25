@@ -1,13 +1,13 @@
 ---
 name: golem-multi-instance-agent-effect
-description: "Creating and reconnecting multiple Effect-based agent instances with identical constructor parameters. Use for phantom agents, newPhantom/getPhantom, phantom IDs, or independent per-instance state with @golemcloud/effect-golem."
+description: "Creating and reconnecting multiple Effect-based agent instances with identical agent id fields. Use for phantom agents, newPhantom/getPhantom, phantom IDs, or independent per-instance state with @golemcloud/effect-golem."
 ---
 
 # Phantom Agents in Effect Golem
 
-Phantom agents give otherwise identical constructor parameters an additional UUID identity. A
-regular durable agent is addressed only by its constructor parameters, so repeated `client.get`
-calls reach the same instance. Each `client.newPhantom` call generates a fresh UUID and therefore
+Phantom agents give otherwise identical agent id fields an additional UUID identity. A
+regular durable agent is addressed only by its agent id fields, so repeated `client.get`
+calls reach the same instance. Each durable `client.newPhantom` call generates a fresh UUID and therefore
 addresses an independent instance with its own state.
 
 ```text
@@ -20,7 +20,7 @@ The bracketed UUID is part of the agent ID. The regular and phantom IDs above ne
 ## Typed Client API
 
 Every value returned by `defineAgent(...)` exposes a typed `client`. Effect clients use named
-constructor records and return `Effect` values:
+agent id records and return `Effect` values. This table describes durable targets:
 
 | API | Meaning |
 | --- | --- |
@@ -29,7 +29,7 @@ constructor records and return `Effect` values:
 | `Agent.client.getPhantom({ name: "shared" }, phantomId)` | Reconnect to the phantom with that UUID string |
 
 All three forms optionally accept the client options record as their last argument. Do not use
-positional constructor parameters, put the UUID in the constructor record, reverse the
+positional agent id fields, put the UUID in the agent id record, reverse the
 `getPhantom` arguments, or translate static methods from the Promise-based TypeScript SDK.
 
 Remote methods also take their declared named parameter record. Pass `{}` to a no-parameter
@@ -42,8 +42,10 @@ const total = yield* collector.getTotal({});
 ```
 
 Client construction and remote calls have typed RPC/configuration errors. Handle or map them when
-they are domain-relevant. If infrastructure failure should fail and retry the current invocation,
-apply `Effect.orDie` to the composed RPC Effect rather than declaring an unrelated domain error.
+they are domain-relevant. Use `Effect.orDie` to turn an unexpected failure into a defect rather
+than declaring an unrelated domain error. An unhandled defect fails the invocation without retry.
+Host retry policies govern retryable RPC failures. Use an SDK saga for business-level
+compensation and explicit guest-code attempts.
 
 ## Stateful Multi-Instance Example
 
@@ -59,32 +61,30 @@ const Values = Schema.Array(Schema.Number);
 export const Collector = defineAgent({
   name: "Collector",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Values,
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     addValue: method({
-      params: { value: Schema.Number },
+      input: { value: Schema.Number },
       success: Schema.Void,
     }),
     getValues: method({
-      params: {},
+      input: {},
       success: Values,
     }),
     getTotal: method({
-      params: {},
+      input: {},
       success: Schema.Number,
     }),
   },
-}).implement((_constructorParams, snapshot) =>
-  Effect.gen(function* () {
-    const values = yield* snapshot.init([]);
-
-    return {
+}).implement({
+  init: () => Ref.make<ReadonlyArray<number>>([]),
+  methods: (values) => ({
       addValue: ({ value }) =>
         Ref.update(values, (current) => [...current, value]),
       getValues: () => Ref.get(values),
@@ -94,39 +94,40 @@ export const Collector = defineAgent({
             current.reduce((total, value) => total + value, 0),
           ),
         ),
-    };
   }),
-);
+  snapshot: Snapshot.ref<ReadonlyArray<number>>(),
+});
 
 export const PhantomCoordinator = defineAgent({
   name: "PhantomCoordinator",
   mode: "durable",
-  constructorParams: {
+  id: {
     name: Schema.String,
   },
   methods: {
     spawnAndFillPhantom: method({
-      params: {},
+      input: {},
       success: Schema.Number,
     }),
     spawnTwoPhantoms: method({
-      params: {},
+      input: {},
       success: Schema.Array(Schema.Number),
     }),
     readNonPhantomCollector: method({
-      params: {},
+      input: {},
       success: Schema.Number,
     }),
   },
-}).implement(({ name }) =>
-  Effect.succeed({
+}).implement({
+  init: ({ name }) => Effect.succeed(name),
+  methods: (name) => ({
     spawnAndFillPhantom: () =>
       Effect.gen(function* () {
         const collector = yield* Collector.client.newPhantom({ name });
         yield* collector.addValue({ value: 10 });
         yield* collector.addValue({ value: 20 });
         return yield* collector.getTotal({});
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.scoped, Effect.orDie),
 
     spawnTwoPhantoms: () =>
       Effect.gen(function* () {
@@ -139,15 +140,15 @@ export const PhantomCoordinator = defineAgent({
         const firstTotal = yield* first.getTotal({});
         const secondTotal = yield* second.getTotal({});
         return [firstTotal, secondTotal];
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.scoped, Effect.orDie),
 
     readNonPhantomCollector: () =>
       Effect.gen(function* () {
         const collector = yield* Collector.client.get({ name });
         return yield* collector.getTotal({});
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.scoped, Effect.orDie),
   }),
-);
+});
 ```
 
 In an existing application, merge the coordinator methods and handlers into the existing agent
@@ -170,16 +171,42 @@ const sameInstance = yield* Collector.client.getPhantom(
 const values = yield* sameInstance.getValues({});
 ```
 
-Calling `getPhantom` again with the same constructor record and UUID is idempotent. No UUID helper
-is needed: `newPhantom` already returns the format accepted by `getPhantom`. The pinned SDK does not
-expose a public implementation-side API for querying the current instance's own phantom UUID, so
-capture `remote.phantomId` on the caller side when creating the phantom.
+Calling `getPhantom` again with the same agent id record and UUID is idempotent. No UUID helper
+is needed: `newPhantom` already returns the format accepted by `getPhantom`. The caller can capture
+`remote.phantomId`. Inside the implementation, read the self identity and parse its encoded ID:
+
+```typescript
+import { AgentIdentity, SelfAgentId } from "@golemcloud/effect-golem";
+
+const ownPhantomId = Effect.gen(function* () {
+  const self = yield* SelfAgentId.SelfAgentId;
+  const identity = yield* AgentIdentity.parse(self.agentId);
+  return identity.phantomId; // undefined for a regular identity
+});
+```
+
+Self metadata reads require view permission on the running agent, not merely an identity-only
+grant. `Agents.getSelfMetadata` exposes the same identity plus full metadata, including stored
+environment and config fields. Handle parse errors; self host failures through `SelfAgentId` are
+defects. Read again after a fork rather than relying on a previously saved identity.
 
 ## Ephemeral and HTTP Cases
 
 - A durable agent client exposes `get`, `newPhantom`, and `getPhantom`.
 - An ephemeral agent client exposes only `newPhantom` and `getPhantom`; it cannot be addressed by
-  constructor parameters alone and its state is not durable.
+  agent id fields alone and its state is not durable. Unlike durable `newPhantom`, ephemeral
+  `newPhantom` returns an `EphemeralRemoteAgent` directly, without a `phantomId` property. Its
+  awaited method calls return `{ value, metadata }`. Do not use the durable save-and-reconnect
+  example to capture a UUID from an ephemeral handle.
+
+```typescript
+const ephemeralCall = Effect.gen(function* () {
+  const remote = yield* EphemeralWorker.client.newPhantom({ name: "task" });
+  const { value, metadata } = yield* remote.run({});
+  return { value, metadata };
+});
+```
+
 - To route every HTTP request to a fresh phantom instance, use the mount option:
 
 ```typescript
@@ -193,9 +220,9 @@ UUID to the handler.
 
 ## Key Constraints
 
-- Two `newPhantom` calls with identical constructor records produce independent identities.
-- `client.get` with the same constructor record reaches the same regular durable agent.
-- Phantom and regular instances with identical constructor records do not share state.
+- Two `newPhantom` calls with identical agent id records produce independent identities.
+- `client.get` with the same agent id record reaches the same regular durable agent.
+- Phantom and regular instances with identical agent id records do not share state.
 - `phantomId` is a lowercase hyphenated UUID string; pass it directly to `getPhantom`.
 - Keep remote inputs as named records and execute RPC by yielding the returned Effects.
 - Do not invent `getOwnPhantomId`, positional client constructors, or Promise-based wrappers.

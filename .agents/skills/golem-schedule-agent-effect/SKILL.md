@@ -28,40 +28,44 @@ agent state the caller expects to observe before execution.
 For an agent declared with `defineAgent`:
 
 - The agent type name is exactly the `name` passed to `defineAgent`.
-- Constructor arguments follow the declaration order in `constructorParams`.
+- Constructor arguments follow the declaration order in `id`.
 - The function name is exactly the key declared in `methods`, including its TypeScript casing.
-- Method arguments follow the declaration order in that method's `params`.
+- Method arguments follow the declaration order in that method's `input`.
 
 Do not infer an agent type from the exported TypeScript binding or translate method names to
 snake_case. The generated Effect starter currently declares its counter with the exact runtime
-name `Counter`:
+name `CounterAgent`:
 
 ```typescript
-export const Counter = defineAgent({
-  name: "Counter",
-  constructorParams: { name: Schema.String },
+export const CounterAgent = defineAgent({
+  name: "CounterAgent",
+  id: { name: Schema.String },
   methods: {
     increment: method({
-      params: {},
+      input: {},
       success: Schema.Number,
     }),
   },
 });
 ```
 
-Schedule that starter agent as `Counter("c1")`, not `CounterAgent("c1")`:
+Schedule that starter agent as `CounterAgent("c1")`:
 
 ```shell
 golem agent invoke --trigger --schedule-at 2026-03-15T10:30:00Z \
-  'Counter("c1")' increment
+  'CounterAgent("c1")' increment
 ```
 
 If an exported TypeScript binding and the `name` metadata differ, the metadata still controls the
 CLI agent type.
 
-The shell arguments are positional CLI values. Do not pass the SDK client's named input objects,
+Pass one native TypeScript literal per user-supplied `input` field in declaration order. Skip host-injected `Principal` fields; do not supply a principal value or placeholder. Do not pass the SDK client's named input objects,
 such as `{ name: "c1" }` or `{ amount: 5 }`, as wrappers around constructor or method argument
 lists.
+
+No-input methods take no arguments, not `'{}'`. `--format json` selects output formatting,
+not input encoding. Awaited, triggered, and scheduled invocations share the same CLI argument parser.
+Load `golem-invoke-agent-effect` for the string fallback and the different HTTP named-body rules.
 
 ## DateTime Format
 
@@ -140,6 +144,9 @@ use **TypeScript syntax** even though their contracts use Effect Schema:
 
 Quote structured values as one shell argument. String values need TypeScript string quotes inside
 the shell quotes:
+
+This example assumes `input: { config: Schema.Struct({ priority: Schema.Number, retry: Schema.Boolean }) }`.
+The unquoted fields belong to the single `config` value, not to the input map:
 
 ```shell
 golem agent invoke --trigger --schedule-at 2026-03-15T10:30:00Z \

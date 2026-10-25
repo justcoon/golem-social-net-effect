@@ -10,37 +10,37 @@ import {
 export const UserChatsAgent = defineAgent({
   name: "UserChatsAgent",
   mode: "durable",
-  constructorParams: {
+  id: {
     id: Schema.String,
   },
   http: Http.mount("/v1/social-net/users/{id}/chats"),
-  snapshot: Snapshot.define({
+  snapshotting: Snapshot.define({
     schema: Schema.NullOr(UserChatsSchema),
     policy: Snapshot.policy.everyN(10),
   }),
   methods: {
     getChats: method({
-      params: {},
+      input: {},
       success: Schema.NullOr(UserChatsSchema),
       http: [Http.get("/")],
     }),
     createChat: method({
-      params: { participants: Schema.Array(Schema.String) },
+      input: { participants: Schema.Array(Schema.String) },
       success: ChatRefSchema,
       error: ErrorResponseSchema,
       http: [Http.post("/")],
     }),
     getUpdates: method({
-      params: { updatesSince: TimestampSchema },
+      input: { updatesSince: TimestampSchema },
       success: Schema.NullOr(UserChatsUpdatesSchema),
     }),
     chatUpdated: method({
-      params: { chatId: Schema.String, updatedAt: TimestampSchema },
+      input: { chatId: Schema.String, updatedAt: TimestampSchema },
       success: Schema.Void,
       error: ErrorResponseSchema,
     }),
     addChat: method({
-      params: {
+      input: {
         chatId: Schema.String,
         createdBy: Schema.String,
         createdAt: TimestampSchema,
@@ -48,7 +48,7 @@ export const UserChatsAgent = defineAgent({
       success: Schema.Void,
     }),
     removeChat: method({
-      params: { chatId: Schema.String },
+      input: { chatId: Schema.String },
       success: Schema.Void,
     }),
   },

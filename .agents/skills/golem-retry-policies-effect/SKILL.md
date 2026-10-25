@@ -84,9 +84,15 @@ To retry HTTP responses such as 502, 503, and 504, the predicate itself (or a ne
 statuses. Effect `HttpClient` normally returns 4xx and 5xx responses; when an eligible host policy
 matches, Golem transparently re-sends the request and `HttpClient` receives the final response.
 
-Status retries require live execution, a reconstructible request, and an idempotent operation.
-They are skipped inside an atomic host region. Prefer GET and other naturally idempotent methods
-unless the operation has explicitly been made safe to retry.
+Status retries require live execution and a reconstructible request. Remote writes are eligible
+for retry without a guest idempotence-mode switch; make them duplicate-safe at the peer. Do not
+predicate on `is-idempotent`; the host no longer supplies that property. The explicit
+`golem:api/host.trap` function raises a deterministic trap and is never retried, even by a catch-all policy. Host policies repair
+individual calls, not whole guest workflows.
+
+A trap is permanent. Return an error for a transient condition and use a retry schedule.
+Application-level errors need application-level handling; returning an error does not automatically
+activate a host retry policy.
 
 ## Build a Host Policy with the Effect SDK
 
@@ -154,11 +160,11 @@ change to its oplog:
 ```typescript
 const installPolicy = Retry.setPolicy(httpTransient);
 
-// In an Effect.gen block, including defineAgent(...).implement(...) setup:
+// In an agent init Effect.gen block:
 yield* Retry.setPolicy(httpTransient);
 ```
 
-Installing during `defineAgent(...).implement(...)` setup makes the policy available to all
+Installing during `init` makes the policy available to all
 handlers of that agent instance. It remains active until overwritten or removed.
 
 Use `Retry.withPolicy` when the policy should apply only while one Effect runs:
@@ -180,7 +186,7 @@ Use the canonical Effect HTTP client so transport failures stay in the Effect ty
 They remain separate from the host policy:
 
 ```typescript
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
 const fetchStatus = (url: string) =>
   HttpClient.get(url).pipe(
@@ -278,7 +284,7 @@ invocation values in Effect projects use TypeScript casing and syntax, for examp
 
 ## Default and Constraints
 
-Without a matching user policy, Golem uses the built-in default: up to 3 retries, exponential
+Without a matching user policy, Golem uses the built-in default: 3 total attempts (the initial attempt and up to 2 retries), exponential
 factor 3, delays clamped to 100ms–1s, and 15% jitter.
 
 - Retry policy definitions are environment-specific; runtime installations are active for the

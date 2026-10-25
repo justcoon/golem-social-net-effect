@@ -7,8 +7,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@golemcloud/effect-golem": "1.5.1",
-    "effect": "4.0.0-beta.98"
+    "@golemcloud/effect-golem": "2.0.1",
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^16.0.1",

@@ -69,8 +69,8 @@ import { Effect, Schema } from "effect";
 import { defineAgent, method, Quota } from "@golemcloud/effect-golem";
 ```
 
-`Quota.acquireQuotaToken` is an Effect. Acquire it once in the agent's `.implement(...)` Effect
-body and close over it in the returned handlers. This closure is the Effect equivalent of keeping
+`Quota.acquireQuotaToken` is an Effect. Acquire it once in the agent's `init` Effect
+and pass it to `methods` as state. This is the Effect equivalent of keeping
 the token in the constructed agent's state; do not acquire a new token for every invocation or at
 module top level.
 
@@ -83,18 +83,16 @@ const QuotaCallResult = Schema.Struct({
 export const QuotaAgent = defineAgent({
   name: "QuotaAgent",
   mode: "durable",
-  constructorParams: { instanceName: Schema.String },
+  id: { instanceName: Schema.String },
   methods: {
     rateLimitedCall: method({
-      params: { input: Schema.String },
+      input: { input: Schema.String },
       success: QuotaCallResult,
     }),
   },
-}).implement(() =>
-  Effect.gen(function* () {
-    const token = yield* Quota.acquireQuotaToken("api-calls", 1n);
-
-    return {
+}).implement({
+  init: () => Quota.acquireQuotaToken("api-calls", 1n),
+  methods: (token) => ({
       rateLimitedCall: ({ input }) =>
         Quota.withReservation(token, 1n, () =>
           Effect.succeed({
@@ -107,9 +105,8 @@ export const QuotaAgent = defineAgent({
           ),
           Effect.orDie,
         ),
-    };
   }),
-);
+});
 ```
 
 The second acquisition argument is the expected amount per reservation and is used for fair
@@ -175,19 +172,21 @@ against the token. If the scope closes before an explicit commit, the SDK perfor
 
 ## 5. Split Tokens Across Agent RPC
 
-Use `Quota.QuotaToken` as the Effect Schema for quota-token method parameters and results. The SDK
-codec converts between the live token and its wire record automatically:
+Use `Quota.QuotaTokenSchema` (or `Quota.quotaTokenSchema({ resourceName: "api-calls" })`) as
+the Effect Schema for quota-token method parameters and results. `Quota.QuotaToken` is the opaque
+handle class, not a schema. The SDK codec transfers ownership of the live token through RPC;
+it does not produce a reusable wire record:
 
 ```typescript
 const SummaryResult = Schema.Struct({
   summary: Schema.String,
-  token: Quota.QuotaToken,
+  token: Quota.QuotaTokenSchema,
 });
 
 const summarize = method({
-  params: {
+  input: {
     text: Schema.String,
-    token: Quota.QuotaToken,
+    token: Quota.QuotaTokenSchema,
   },
   success: SummaryResult,
 });
@@ -196,14 +195,19 @@ const summarize = method({
 Split from the parent, send the child token through an existing typed agent client, and merge the
 returned token:
 
+After the RPC transfers `childToken`, the sender must not reserve with it, send it again, or
+merge that original handle. Only the token returned by the callee can be merged back. A caller
+must not assume ownership returns when an RPC fails after transfer.
+
 ```typescript
-const childToken = yield* Quota.split(token, 200n);
+const parentToken = yield* Quota.acquireQuotaToken("api-calls", 400n);
+const childToken = yield* Quota.split(parentToken, 200n);
 const summarizer = yield* SummarizerAgent.client.get({ name: "sum-1" });
 const { summary, token: returnedToken } = yield* summarizer.summarize({
   text,
   token: childToken,
 });
-yield* Quota.merge(token, returnedToken);
+yield* Quota.merge(parentToken, returnedToken);
 return summary;
 ```
 
@@ -216,7 +220,7 @@ merge consumes the returned child token, so do not use it afterward.
 Resource updates affect running agents without changing their Effect code:
 
 ```shell
-golem resource update api-calls --limit '{"type":"rate","value":200,"period":"minute","max":2000}' --environment prod
+golem resource update api-calls --limit '{"type":"Rate","value":200,"period":"minute","max":2000}' --environment prod
 ```
 
 ## Key Constraints
@@ -230,5 +234,5 @@ golem resource update api-calls --limit '{"type":"rate","value":200,"period":"mi
 - Recover a rejected reservation with `Effect.catchTag("FailedReservationError", ...)`; do not use
   a broad catch that also hides body failures or `QuotaHostError`.
 - Resource names in code must exactly match their `golem.yaml` `resourceDefaults` keys.
-- Use `Quota.QuotaToken`, not `Quota.QuotaTokenRecord`, in agent RPC schemas. The record is the
-  inspectable wire representation, not the live token handle.
+- Use `Quota.QuotaTokenSchema` or `Quota.quotaTokenSchema(...)` in agent RPC schemas, not the
+  opaque `Quota.QuotaToken` class. Tokens cannot be serialized as ordinary JSON or snapshot state.

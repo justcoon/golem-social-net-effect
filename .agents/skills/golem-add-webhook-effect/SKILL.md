@@ -6,8 +6,9 @@ description: "Using one-shot webhooks in an Effect-based Golem agent. Use when a
 # Using Webhooks in an Effect Golem Agent
 
 `Webhook.create` allocates a Golem promise and mints a temporary public URL for it. Posting to the
-URL completes the promise; awaiting the handle durably suspends the current invocation without
-consuming compute until the callback arrives.
+URL completes the promise. Creation does not suspend the agent. For durable agents awaiting a
+callback, suspension can occur after the suspension policy delay when all active work permits it.
+Suspension frees guest execution resources; persisted state and other resources remain.
 
 Use this for asynchronous provider callbacks such as payment, CI/CD, and workflow notifications.
 The URL is a one-shot rendezvous, not a permanent incoming HTTP endpoint. Use `Http.post(...)`
@@ -42,7 +43,7 @@ import {
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 import { defineAgent, Http, method, Webhook } from "@golemcloud/effect-golem";
 ```
 
@@ -50,7 +51,7 @@ import { defineAgent, Http, method, Webhook } from "@golemcloud/effect-golem";
 | ------------------------ | --------------------------------------------------------------- |
 | `Webhook.create`         | `Effect` that allocates a promise and returns a `WebhookHandle` |
 | `handle.url`             | Public URL to register or share with the external caller        |
-| `handle.await`           | `Effect` that durably waits for the POST body                   |
+| `handle.await`           | Waits for the POST and can durably suspend after the delay      |
 | `handle.poll`            | Non-blocking `Effect` returning `WebhookPayload \| undefined`   |
 | `handle.promiseId`       | Underlying `Agents.PromiseId`; normally keep this internal      |
 | `payload.bytes`          | Raw request body as `Uint8Array`                                |
@@ -105,7 +106,7 @@ Declare the ordinary agent mount and, optionally, a custom webhook suffix togeth
 export const PaymentWatcher = defineAgent({
   name: "PaymentWatcher",
   mode: "durable",
-  constructorParams: {
+  id: {
     accountName: Schema.String,
   },
   http: Http.mount("/payments/{accountName}", {
@@ -113,13 +114,14 @@ export const PaymentWatcher = defineAgent({
   }),
   methods: {
     waitForPayment: method({
-      params: {},
+      input: {},
       success: PaymentEvent,
       http: [Http.post("/wait")],
     }),
   },
-}).implement(() =>
-  Effect.succeed({
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
     waitForPayment: () =>
       Effect.gen(function* () {
         const handle = yield* Webhook.create;
@@ -128,7 +130,7 @@ export const PaymentWatcher = defineAgent({
         return yield* payload.decode(PaymentEvent);
       }).pipe(Effect.provide(FetchHttpClient.layer), Effect.orDie),
   }),
-);
+});
 ```
 
 The generated URL has this shape:
@@ -170,7 +172,7 @@ const shareCallbackUrl = Effect.gen(function* () {
 });
 ```
 
-Define `receiveUrl` with `method({ params: { url: Schema.String }, ... })`; remote methods and
+Define `receiveUrl` with `method({ input: { url: Schema.String }, ... })`; remote methods and
 `client.get(...)` are Effects. Use the remote method's `.trigger(...)` form when URL handoff is
 fire-and-forget and the creator should enter `handle.await` immediately. A normal
 `yield* receiver.receiveUrl(...)` waits for the remote method to finish before reaching the
