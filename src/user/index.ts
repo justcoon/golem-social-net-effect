@@ -1,11 +1,6 @@
 import { Effect, Ref, Schema } from "effect";
 import * as Result from "effect/Result";
-import {
-  defineAgent,
-  Http,
-  method,
-  Snapshot,
-} from "@golemcloud/effect-golem";
+import { defineAgent, Http, method, Snapshot } from "@golemcloud/effect-golem";
 import {
   UserConnectionType,
   UserConnectionTypeSchema,
@@ -22,11 +17,7 @@ import {
   optTextMatches,
   textExactMatches,
 } from "../common/query.js";
-import {
-  arrayChunks,
-  getCurrentTimestamp,
-  getShardNumber,
-} from "../common/utils.js";
+import { arrayChunks, getCurrentTimestamp, getShardNumber } from "../common/utils.js";
 
 export const ConnectedUserSchema = Schema.Struct({
   userId: Schema.String,
@@ -41,9 +32,7 @@ export const UserSchema = Schema.Struct({
   userId: Schema.String,
   name: Schema.NullOr(Schema.String),
   email: Schema.NullOr(Schema.String),
-  connectedUsers: Schema.Array(
-    Schema.Tuple([Schema.String, ConnectedUserSchema]),
-  ),
+  connectedUsers: Schema.Array(Schema.Tuple([Schema.String, ConnectedUserSchema])),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -61,9 +50,7 @@ export const UpdateUserResponseSchema = Schema.Struct({
   userId: Schema.String,
 });
 
-export type UpdateUserResponse = Schema.Schema.Type<
-  typeof UpdateUserResponseSchema
->;
+export type UpdateUserResponse = Schema.Schema.Type<typeof UpdateUserResponseSchema>;
 
 export const USER_INDEX_SHARDS = 8;
 
@@ -90,11 +77,7 @@ export function initUserIndexState(): UserIndexState {
   };
 }
 
-export function setUserAgentName(
-  user: User,
-  name: string | null,
-  now: Timestamp,
-): User {
+export function setUserAgentName(user: User, name: string | null, now: Timestamp): User {
   return {
     ...user,
     name,
@@ -136,8 +119,7 @@ export function connectUserAgent(
   const existingConnection = existingEntry ? existingEntry[1] : undefined;
 
   const shouldConnect =
-    !existingConnection ||
-    !existingConnection.connectionTypes.includes(connectionType);
+    !existingConnection || !existingConnection.connectionTypes.includes(connectionType);
 
   if (shouldConnect) {
     if (existingConnection) {
@@ -179,22 +161,19 @@ export function disconnectUserAgent(
     return { updatedUser: user, isNew: false };
   }
 
-  let connectedUsers = [...user.connectedUsers];
+  const connectedUsers = [...user.connectedUsers];
   const existingIdx = connectedUsers.findIndex((u) => u[0] === userId);
   const existingEntry = existingIdx !== -1 ? connectedUsers[existingIdx] : undefined;
   const existingConnection = existingEntry ? existingEntry[1] : undefined;
 
   const shouldDisconnect =
-    existingConnection !== undefined &&
-    existingConnection.connectionTypes.includes(connectionType);
+    existingConnection !== undefined && existingConnection.connectionTypes.includes(connectionType);
 
   if (shouldDisconnect) {
     if (existingConnection!.connectionTypes.length === 1) {
       connectedUsers.splice(existingIdx, 1);
     } else {
-      const newConnTypes = existingConnection!.connectionTypes.filter(
-        (c) => c !== connectionType,
-      );
+      const newConnTypes = existingConnection!.connectionTypes.filter((c) => c !== connectionType);
       const updatedConn: ConnectedUser = {
         ...existingConnection!,
         connectionTypes: newConnTypes,
@@ -302,9 +281,7 @@ export const UserIndexAgent = defineAgent({
   },
 }).implement({
   init: ({ shard }) =>
-    Ref.make<UserIndexState>(initUserIndexState()).pipe(
-      Effect.map((ref) => ({ shard, ref })),
-    ),
+    Ref.make<UserIndexState>(initUserIndexState()).pipe(Effect.map((ref) => ({ shard, ref }))),
   methods: ({ shard, ref }) => ({
     add: ({ userId }) =>
       Ref.update(ref, (current) => {
@@ -379,10 +356,7 @@ export const UserAgent = defineAgent({
 });
 
 UserAgent.implement({
-  init: ({ id }) =>
-    Ref.make<User | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<User | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => {
     const getOrInitState = Effect.scoped(
       Effect.gen(function* () {
@@ -404,9 +378,7 @@ UserAgent.implement({
       getUser: () => Ref.get(ref),
 
       getUserIfMatch: ({ query }) =>
-        Ref.get(ref).pipe(
-          Effect.map((u) => (u && userMatchesQuery(u, query) ? u : null)),
-        ),
+        Ref.get(ref).pipe(Effect.map((u) => (u && userMatchesQuery(u, query) ? u : null))),
 
       setName: ({ name }) =>
         Effect.gen(function* () {
@@ -439,9 +411,7 @@ UserAgent.implement({
             yield* Ref.set(ref, updatedUser);
             if (isNew) {
               yield* Effect.logInfo(`connect user - id: ${userId}, type: ${connectionType}`);
-              const otherUser = yield* UserAgent.client
-                .get({ id: userId })
-                .pipe(Effect.orDie);
+              const otherUser = yield* UserAgent.client.get({ id: userId }).pipe(Effect.orDie);
               yield* otherUser.connectUser
                 .trigger({
                   userId: id,
@@ -466,9 +436,7 @@ UserAgent.implement({
             yield* Ref.set(ref, updatedUser);
             if (isNew) {
               yield* Effect.logInfo(`disconnect user - id: ${userId}, type: ${connectionType}`);
-              const otherUser = yield* UserAgent.client
-                .get({ id: userId })
-                .pipe(Effect.orDie);
+              const otherUser = yield* UserAgent.client.get({ id: userId }).pipe(Effect.orDie);
               yield* otherUser.disconnectUser
                 .trigger({
                   userId: id,
@@ -512,18 +480,14 @@ export const UserSearchAgent = defineAgent({
 
           const shardStates: UserIndexState[] = [];
           for (let i = 0; i < USER_INDEX_SHARDS; i++) {
-            const shardAgent = yield* UserIndexAgent.client
-              .get({ shard: i })
-              .pipe(Effect.orDie);
+            const shardAgent = yield* UserIndexAgent.client.get({ shard: i }).pipe(Effect.orDie);
             const shardState = yield* shardAgent.getState({}).pipe(Effect.orDie);
             shardStates.push(shardState);
           }
 
           const allUserIds: string[] = [];
           for (const sState of shardStates) {
-            const matchingIds = sState.userIds.filter((id) =>
-              userIdMatchesQuery(id, parsedQuery),
-            );
+            const matchingIds = sState.userIds.filter((id) => userIdMatchesQuery(id, parsedQuery));
             allUserIds.push(...matchingIds);
           }
 
@@ -534,9 +498,7 @@ export const UserSearchAgent = defineAgent({
               yield* Effect.logInfo("Search users - ids: (" + ids.join(", ") + ")");
 
               for (const id of ids) {
-                const uAgent = yield* UserAgent.client
-                  .get({ id })
-                  .pipe(Effect.orDie);
+                const uAgent = yield* UserAgent.client.get({ id }).pipe(Effect.orDie);
                 const userVal = yield* uAgent
                   .getUserIfMatch({ query: parsedQuery })
                   .pipe(Effect.orDie);
@@ -552,5 +514,3 @@ export const UserSearchAgent = defineAgent({
       ),
   }),
 });
-
-

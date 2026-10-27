@@ -12,6 +12,7 @@ skinparam ArrowColor #666666
 ' Color definitions
 !define STATEFUL #D5F5E3
 !define EPHEMERAL #D1F2EB
+!define STREAMING #D6EAF8
 !define GATEWAY #F9E79F
 !define ACTOR_COLOR #FFD700
 
@@ -39,6 +40,11 @@ package "Golem Cloud" {
         [User Chats View Agent] as chats_view EPHEMERAL
         [User Chats Updates Agent] as chats_updates EPHEMERAL
     }
+
+    package "Streaming Agents (Durable / Phantom)" {
+        [User Timeline Updates Stream Agent] as timeline_updates_stream STREAMING
+        [User Chats Updates Stream Agent] as chats_updates_stream STREAMING
+    }
 }
 
 ' External to Gateway
@@ -52,10 +58,12 @@ gateway --> user_search : "Search Users"
 gateway --> user_posts_view : "Get User Posts"
 gateway --> timeline_view : "Get Timeline"
 gateway --> timeline_updates : "Timeline Long-polling"
+gateway --> timeline_updates_stream : "Timeline Streams (SSE)"
 gateway --> user_chats : "Create Chat"
 gateway --> chat : "Send Message / Like"
 gateway --> chats_view : "Get User Chats"
 gateway --> chats_updates : "Chat Long-polling"
+gateway --> chats_updates_stream : "Chat Streams (SSE)"
 
 ' Intern-agent interactions
 user --> user_index : "Register User ID"
@@ -68,6 +76,7 @@ user_posts_view --> post : "Resolve Content"
 timeline_view --> user_timeline : "Get Post Refs"
 timeline_view --> post : "Resolve Content"
 timeline_updates --> user_timeline : "Poll for Refs"
+timeline_updates_stream --> user_timeline : "Poll for Refs"
 
 post --> timeline_updater : "Post Created Event"
 timeline_updater --> user : "Get Connections"
@@ -78,6 +87,7 @@ chat --> user_chats : "Chat Update Notifications"
 chats_view --> user_chats : "Get Chat Refs"
 chats_view --> chat : "Resolve Full Content"
 chats_updates --> user_chats : "Poll for Refs"
+chats_updates_stream --> user_chats : "Poll for Refs"
 
 ' Add notes
 note right of gateway
@@ -91,7 +101,9 @@ note right of gateway
   • /.../users → User Index Agent
   • /.../users/{id}/posts → User Posts Agent
   • /.../users/{id}/timeline → User Timeline Agent
+  • /.../users/{id}/timeline/updates/stream → User Timeline Updates Stream Agent
   • /.../users/{id}/chats → User Chats Agent
+  • /.../users/{id}/chats/updates/stream → User Chats Updates Stream Agent
   • /.../posts/{id} → Post Agent
   • /.../chats/{id} → Chat Agent
 end note

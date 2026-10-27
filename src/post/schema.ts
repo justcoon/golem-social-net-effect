@@ -28,17 +28,13 @@ export const AddCommentResponseSchema = Schema.Struct({
   commentId: Schema.String,
 });
 
-export type AddCommentResponse = Schema.Schema.Type<
-  typeof AddCommentResponseSchema
->;
+export type AddCommentResponse = Schema.Schema.Type<typeof AddCommentResponseSchema>;
 
 export const UpdatePostResponseSchema = Schema.Struct({
   postId: Schema.String,
 });
 
-export type UpdatePostResponse = Schema.Schema.Type<
-  typeof UpdatePostResponseSchema
->;
+export type UpdatePostResponse = Schema.Schema.Type<typeof UpdatePostResponseSchema>;
 
 export const PostSchema = Schema.Struct({
   postId: Schema.String,
@@ -66,9 +62,7 @@ export function postMatchesQuery(post: Post, query: Query): boolean {
         matches = textMatches(post.content, value);
         break;
       case "comments":
-        matches = post.comments.some(([_, comment]) =>
-          textMatches(comment.content, value),
-        );
+        matches = post.comments.some(([_, comment]) => textMatches(comment.content, value));
         break;
       default:
         matches = false;
@@ -157,11 +151,7 @@ export function initPostState(postId: string, now: Timestamp): Post {
   };
 }
 
-export function initializePostAgent(
-  post: Post,
-  createdBy: string,
-  content: string,
-): Post {
+export function initializePostAgent(post: Post, createdBy: string, content: string): Post {
   return {
     ...post,
     createdBy,
@@ -169,12 +159,7 @@ export function initializePostAgent(
   };
 }
 
-export function setPostLike(
-  post: Post,
-  userId: string,
-  likeType: LikeType,
-  now: Timestamp,
-): Post {
+export function setPostLike(post: Post, userId: string, likeType: LikeType, now: Timestamp): Post {
   const likes = post.likes.filter((l) => l[0] !== userId);
   likes.push([userId, likeType]);
   return {

@@ -3,7 +3,7 @@ name: feature-implementation
 description: >-
   Disciplined end-to-end workflow for implementing features in this project.
   Guides the agent through creating a feature plan in docs/implementation/<feature_name_or_id>_feature_plan.md,
-  obtaining user approval, implementing with strict validation (formatting, lint, typecheck, tests, golem build, e2e tests),
+  obtaining user approval, implementing with strict validation (formatting, lint, typecheck, tests, golem build),
   generating a walkthrough in docs/implementation/<feature_name_or_id>_implementation_walkthrough.md,
   and securing final user approval. Use whenever implementing a new feature, agent capability, or non-trivial enhancement.
 ---
@@ -49,7 +49,7 @@ Before modifying any source code or writing implementation files:
      - **Overview & Goals**: What the feature accomplishes and why.
      - **Architecture & Design**: Agent interfaces, Effect schemas, services, storage, and concurrency model.
      - **File-by-File Changes**: Categorized with `[NEW]`, `[MODIFY]`, or `[DELETE]`.
-     - **Verification Plan**: Exact commands to run for typecheck, build, automated tests, E2E tests, and runtime checks.
+     - **Verification Plan**: Exact commands to run for formatting, typecheck, lint, build, automated tests, and runtime checks.
      - **Risks & Open Questions**: Known trade-offs or technical decisions.
 
 ---
@@ -103,11 +103,6 @@ Once user approval is granted:
      npm test            # npx tsx --test "test/*.test.ts"
      ```
      Execute automated unit and integration tests.
-   - **End-to-End (E2E) Test Suite**:
-     ```bash
-     ./run_e2e_test.sh   # or npm run test:e2e against an active test server
-     ```
-     Execute the containerized E2E test suite to verify full pipeline functionality across gateway routing, connector ingestion, storage persistence, checkpointing, vector/hybrid search, and GraphRAG answer synthesis.
    - **Runtime / Smoke Verification**:
      Where applicable, verify agent interactions or use the Golem CLI / REPL to ensure proper behavior.
 3. **Fix Any Regressions**:
@@ -133,7 +128,6 @@ Once implementation and all validation checks pass:
      - Linter: `npm run lint` (`npx eslint src/ test/`)
      - Build: `npm run build` (`golem build --yes`)
      - Unit/Integration Tests: `npm test`
-     - End-to-End Tests: `./run_e2e_test.sh` (`npm run test:e2e`)
      - Runtime smoke verification
    - **Verification / Usage Guide**: Step-by-step instructions for how the user can test or interact with the feature.
 

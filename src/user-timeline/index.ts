@@ -1,19 +1,12 @@
 import { Effect, Ref, Schema } from "effect";
-import {
-  defineAgent,
-  Http,
-  method,
-  Snapshot,
-} from "@golemcloud/effect-golem";
+import { defineAgent, Http, method, WitTypes } from "@golemcloud/effect-golem";
 import { TimestampSchema } from "../common/types.js";
 import { parseQuery } from "../common/query.js";
 import { getCurrentTimestamp } from "../common/utils.js";
-import { pollForUpdates } from "../common/poll.js";
+import { pollForUpdates, streamUpdates } from "../common/poll.js";
 import { PostSchema, fetchPostsByIds } from "../post/index.js";
 import {
   TimelinePostRefSchema,
-  UserTimelineSchema,
-  UserTimelineUpdatesSchema,
   initUserTimelineState,
   updateUserTimelinePosts,
   matchesPostRef,
@@ -27,10 +20,7 @@ export * from "./schema.js";
 export * from "./spec.js";
 
 UserTimelineAgent.implement({
-  init: ({ id }) =>
-    Ref.make<UserTimeline | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<UserTimeline | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
       let current = yield* Ref.get(ref);
@@ -48,9 +38,7 @@ UserTimelineAgent.implement({
         Ref.get(ref).pipe(
           Effect.map((s) => {
             if (s !== null) {
-              const updates = s.posts.filter(
-                (p) => p.updatedAt.timestamp > updatesSince.timestamp,
-              );
+              const updates = s.posts.filter((p) => p.updatedAt.timestamp > updatesSince.timestamp);
               return {
                 userId: s.userId,
                 posts: updates,
@@ -107,9 +95,7 @@ export const UserTimelineViewAgent = defineAgent({
           const uTimelineAgent = yield* UserTimelineAgent.client
             .get({ id: userId })
             .pipe(Effect.orDie);
-          const timelinePosts = yield* uTimelineAgent
-            .getTimeline({})
-            .pipe(Effect.orDie);
+          const timelinePosts = yield* uTimelineAgent.getTimeline({}).pipe(Effect.orDie);
 
           yield* Effect.logInfo(`get posts view - user id: ${userId}, query: ${query}`);
 
@@ -211,6 +197,57 @@ export const UserTimelineUpdatesAgent = defineAgent({
           );
           return res;
         }),
+      ),
+  }),
+});
+
+export const UserTimelineUpdatesStreamAgent = defineAgent({
+  name: "UserTimelineUpdatesStreamAgent",
+  mode: "durable",
+  id: {},
+  http: Http.mount("/v1/social-net/users", { phantomAgent: true }),
+  methods: {
+    getPostsUpdates: method({
+      input: {
+        userId: Schema.String,
+        since: Schema.NullOr(Schema.String),
+        iterWaitTime: Schema.NullOr(Schema.Number),
+      },
+      success: WitTypes.AgentStream(TimelinePostRefSchema),
+      http: [
+        Http.get(
+          "/{userId}/timeline/posts/updates/stream?since={since}&iterWaitTime={iterWaitTime}",
+          {
+            durableStreams: {
+              slots: [{ source: "output", slot: "$result", name: "updates" }],
+              load: {
+                maxConcurrentReadersPerStream: 8,
+              },
+            },
+          },
+        ),
+      ],
+    }),
+  },
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
+    getPostsUpdates: ({ userId, since, iterWaitTime }) =>
+      streamUpdates(
+        userId,
+        since,
+        iterWaitTime,
+        (uid, currentSince) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const uAgent = yield* UserTimelineAgent.client.get({ id: uid }).pipe(Effect.orDie);
+              const updates = yield* uAgent
+                .getUpdates({ updatesSince: { timestamp: currentSince } })
+                .pipe(Effect.orDie);
+              return updates ? [...updates.posts] : null;
+            }),
+          ),
+        (p) => p.updatedAt.timestamp,
       ),
   }),
 });

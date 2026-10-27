@@ -1,10 +1,6 @@
 import { Schema } from "effect";
 import * as Result from "effect/Result";
-import {
-  TimestampSchema,
-  Timestamp,
-  ErrorResponse,
-} from "../common/types.js";
+import { TimestampSchema, Timestamp, ErrorResponse } from "../common/types.js";
 import { Query, textExactMatches } from "../common/query.js";
 import { getCurrentTimestamp } from "../common/utils.js";
 
@@ -33,9 +29,7 @@ export const UserChatsUpdatesSchema = Schema.Struct({
   chats: Schema.Array(ChatRefSchema),
 });
 
-export type UserChatsUpdates = Schema.Schema.Type<
-  typeof UserChatsUpdatesSchema
->;
+export type UserChatsUpdates = Schema.Schema.Type<typeof UserChatsUpdatesSchema>;
 
 export function initUserChatsState(userId: string, now: Timestamp): UserChats {
   return {
@@ -60,9 +54,7 @@ export function addUserChat(
   };
 
   const chats = [...state.chats, chatRef];
-  chats.sort((a, b) =>
-    b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp),
-  );
+  chats.sort((a, b) => b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp));
 
   const trimmedChats = chats.length > CHATS_MAX_COUNT ? chats.slice(0, CHATS_MAX_COUNT) : chats;
 
@@ -89,9 +81,7 @@ export function updateUserChat(
       updatedAt,
     };
     chats[chatIdx] = updatedChatRef;
-    chats.sort((a, b) =>
-      b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp),
-    );
+    chats.sort((a, b) => b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp));
     return Result.succeed({
       ...state,
       chats,
@@ -120,9 +110,7 @@ export function addExistingChat(
       },
     ];
 
-    chats.sort((a, b) =>
-      b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp),
-    );
+    chats.sort((a, b) => b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp));
 
     const trimmedChats = chats.length > CHATS_MAX_COUNT ? chats.slice(0, CHATS_MAX_COUNT) : chats;
     return {
@@ -134,11 +122,7 @@ export function addExistingChat(
   return state;
 }
 
-export function removeUserChat(
-  state: UserChats,
-  chatId: string,
-  now: Timestamp,
-): UserChats {
+export function removeUserChat(state: UserChats, chatId: string, now: Timestamp): UserChats {
   const chats = state.chats.filter((c) => c.chatId !== chatId);
   return {
     ...state,

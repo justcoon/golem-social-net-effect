@@ -1,11 +1,7 @@
 import { Schema } from "effect";
 import { defineAgent, method, Snapshot } from "@golemcloud/effect-golem";
 import { TimestampSchema } from "../common/types.js";
-import {
-  TimelinePostRefSchema,
-  UserTimelineSchema,
-  UserTimelineUpdatesSchema,
-} from "./schema.js";
+import { TimelinePostRefSchema, UserTimelineSchema, UserTimelineUpdatesSchema } from "./schema.js";
 
 export const UserTimelineAgent = defineAgent({
   name: "UserTimelineAgent",

@@ -1,20 +1,11 @@
 import { Effect, Ref, Schema } from "effect";
-import {
-  defineAgent,
-  Http,
-  method,
-  Snapshot,
-} from "@golemcloud/effect-golem";
-import {
-  LikeTypeSchema,
-  ErrorResponseSchema,
-} from "../common/types.js";
+import { defineAgent, Http, method, Snapshot } from "@golemcloud/effect-golem";
+import { LikeTypeSchema, ErrorResponseSchema } from "../common/types.js";
 import { Query, QuerySchema } from "../common/query.js";
 import { arrayChunks, getCurrentTimestamp } from "../common/utils.js";
 import { UserAgent } from "../user/index.js";
 import { UserTimelineAgent } from "../user-timeline/spec.js";
 import {
-  CommentSchema,
   AddCommentResponseSchema,
   UpdatePostResponseSchema,
   PostSchema,
@@ -63,10 +54,7 @@ export const TimelinesUpdaterAgent = defineAgent({
     }),
   },
 }).implement({
-  init: ({ id }) =>
-    Ref.make<PostUpdates | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<PostUpdates | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
       let current = yield* Ref.get(ref);
@@ -88,9 +76,7 @@ export const TimelinesUpdaterAgent = defineAgent({
           `posts updates - user id: ${id} - updates: ${s.updates.length} - processing ...`,
         );
 
-        const userAgent = yield* UserAgent.client
-          .get({ id })
-          .pipe(Effect.orDie);
+        const userAgent = yield* UserAgent.client.get({ id }).pipe(Effect.orDie);
         const user = yield* userAgent.getUser({}).pipe(Effect.orDie);
 
         if (user !== null) {
@@ -106,12 +92,8 @@ export const TimelinesUpdaterAgent = defineAgent({
             updatedAt: u.updatedAt,
           }));
 
-          const selfTimeline = yield* UserTimelineAgent.client
-            .get({ id })
-            .pipe(Effect.orDie);
-          yield* selfTimeline.postsUpdated
-            .trigger({ posts: postRefs })
-            .pipe(Effect.orDie);
+          const selfTimeline = yield* UserTimelineAgent.client.get({ id }).pipe(Effect.orDie);
+          yield* selfTimeline.postsUpdated.trigger({ posts: postRefs }).pipe(Effect.orDie);
 
           for (const cuTuple of connectedUsers) {
             const cu = cuTuple[1];
@@ -126,9 +108,7 @@ export const TimelinesUpdaterAgent = defineAgent({
               const cuTimeline = yield* UserTimelineAgent.client
                 .get({ id: cu.userId })
                 .pipe(Effect.orDie);
-              yield* cuTimeline.postsUpdated
-                .trigger({ posts: notifyPostRefs })
-                .pipe(Effect.orDie);
+              yield* cuTimeline.postsUpdated.trigger({ posts: notifyPostRefs }).pipe(Effect.orDie);
             }
           }
         } else {
@@ -235,17 +215,12 @@ export const PostAgent = defineAgent({
     }),
   },
 }).implement({
-  init: ({ id }) =>
-    Ref.make<Post | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<Post | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => ({
     getPost: () => Ref.get(ref),
 
     getPostIfMatch: ({ query }) =>
-      Ref.get(ref).pipe(
-        Effect.map((s) => (s && postMatchesQuery(s, query) ? s : null)),
-      ),
+      Ref.get(ref).pipe(Effect.map((s) => (s && postMatchesQuery(s, query) ? s : null))),
 
     initPost: ({ createdBy, content }) =>
       Effect.scoped(
@@ -256,9 +231,7 @@ export const PostAgent = defineAgent({
           }
 
           let newPost = initPostState(id, getCurrentTimestamp());
-          yield* Effect.logInfo(
-            `init post - created by: ${createdBy}, content: ${content}`,
-          );
+          yield* Effect.logInfo(`init post - created by: ${createdBy}, content: ${content}`);
 
           newPost = initializePostAgent(newPost, createdBy, content);
           yield* Ref.set(ref, newPost);
@@ -300,9 +273,7 @@ export const PostAgent = defineAgent({
           return yield* Effect.fail({ message: "Post not exists" });
         }
         yield* Effect.logInfo(`remove like - user id: ${userId}`);
-        const updated = yield* Effect.fromResult(
-          removePostLike(s, userId, getCurrentTimestamp()),
-        );
+        const updated = yield* Effect.fromResult(removePostLike(s, userId, getCurrentTimestamp()));
         yield* Ref.set(ref, updated);
         return { postId: updated.postId };
       }),
@@ -315,13 +286,7 @@ export const PostAgent = defineAgent({
         }
         yield* Effect.logInfo(`add comment - user id: ${userId}, content: ${content}`);
         const { post: updatedPost, commentId } = yield* Effect.fromResult(
-          addPostComment(
-            s,
-            userId,
-            content,
-            parentCommentId,
-            getCurrentTimestamp(),
-          ),
+          addPostComment(s, userId, content, parentCommentId, getCurrentTimestamp()),
         );
         yield* Ref.set(ref, updatedPost);
         return { postId: updatedPost.postId, commentId };
@@ -351,13 +316,7 @@ export const PostAgent = defineAgent({
           `set comment like - comment id: ${commentId}, user id: ${userId}, like type: ${likeType}`,
         );
         const updated = yield* Effect.fromResult(
-          setPostCommentLike(
-            s,
-            commentId,
-            userId,
-            likeType,
-            getCurrentTimestamp(),
-          ),
+          setPostCommentLike(s, commentId, userId, likeType, getCurrentTimestamp()),
         );
         yield* Ref.set(ref, updated);
         return { postId: updated.postId };
@@ -369,16 +328,9 @@ export const PostAgent = defineAgent({
         if (s === null) {
           return yield* Effect.fail({ message: "Post not exists" });
         }
-        yield* Effect.logInfo(
-          `remove comment like - comment id: ${commentId}, user id: ${userId}`,
-        );
+        yield* Effect.logInfo(`remove comment like - comment id: ${commentId}, user id: ${userId}`);
         const updated = yield* Effect.fromResult(
-          removePostCommentLike(
-            s,
-            commentId,
-            userId,
-            getCurrentTimestamp(),
-          ),
+          removePostCommentLike(s, commentId, userId, getCurrentTimestamp()),
         );
         yield* Ref.set(ref, updated);
         return { postId: updated.postId };
@@ -391,11 +343,7 @@ export const PostAgent = defineAgent({
   },
 });
 
-
-export function fetchPostsByIds(
-  postIds: string[],
-  query?: Query,
-): Effect.Effect<Post[], any, any> {
+export function fetchPostsByIds(postIds: string[], query?: Query): Effect.Effect<Post[], any, any> {
   return Effect.scoped(
     Effect.gen(function* () {
       const results: Post[] = [];

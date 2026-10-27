@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { api, type Chat, type ChatRef, type LikeType } from '../api';
+import { api, streamChatUpdates, type Chat, type ChatRef, type LikeType, parseDate } from '../api';
 import { useUserStore } from './user';
 
 export const useChatStore = defineStore('chat', () => {
@@ -10,7 +10,9 @@ export const useChatStore = defineStore('chat', () => {
     const isLoading = ref(false);
     const error = ref<string | null>(null);
     const lastUpdate = ref<string>(new Date(0).toISOString());
-    const isPolling = ref(false);
+    const isStreaming = ref(false);
+    let abortController: AbortController | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const activeChat = computed(() =>
         chats.value.find(c => c.chatId === activeChatId.value) || null
@@ -25,7 +27,7 @@ export const useChatStore = defineStore('chat', () => {
                 chats.value = response.data;
                 // Update lastUpdate based on the most recent chat update
                 const latest = chats.value.reduce((latest, chat) => {
-                    const chatTime = new Date(chat.updatedAt.timestamp).getTime();
+                    const chatTime = parseDate(chat.updatedAt).getTime();
                     return chatTime > latest ? chatTime : latest;
                 }, 0);
                 if (latest > 0) {
@@ -39,37 +41,66 @@ export const useChatStore = defineStore('chat', () => {
         }
     }
 
-    async function pollUpdates() {
-        if (!userStore.userId || !isPolling.value) return;
-        try {
-            const response = await api.getChatUpdates(userStore.userId, lastUpdate.value);
-            if (response.data) {
-                const updates: ChatRef[] = response.data;
-                if (updates.length > 0) {
-                    // If there are updates, refetch all chats to get full content
-                    // In a real app we'd fetch only changed chats if API allowed it
-                    await fetchChats();
+    async function startStreaming() {
+        if (isStreaming.value || !userStore.userId) return;
+        isStreaming.value = true;
+
+        async function connect() {
+            if (!isStreaming.value || !userStore.userId) return;
+
+            abortController = new AbortController();
+
+            try {
+                await streamChatUpdates(
+                    userStore.userId,
+                    lastUpdate.value,
+                    abortController.signal,
+                    async (update: ChatRef) => {
+                        const rawTs = typeof update.updatedAt === 'string'
+                            ? update.updatedAt
+                            : (update.updatedAt as any)?.timestamp;
+
+                        if (rawTs) {
+                            const updateTime = new Date(rawTs).getTime();
+                            const currentLast = new Date(lastUpdate.value).getTime();
+                            if (!isNaN(updateTime) && updateTime > currentLast) {
+                                lastUpdate.value = new Date(updateTime).toISOString();
+                            }
+                        }
+                        // Refresh chats to reflect the update in UI
+                        await fetchChats();
+                    }
+                );
+            } catch (err: any) {
+                if (err.name !== 'AbortError' && !abortController?.signal.aborted) {
+                    console.error('Chat stream connection error:', err);
+                }
+            } finally {
+                if (isStreaming.value) {
+                    reconnectTimeout = setTimeout(connect, 1000);
                 }
             }
-        } catch (e) {
-            // Silently fail polling or log it
-            console.error('Polling error:', e);
-        } finally {
-            if (isPolling.value) {
-                setTimeout(pollUpdates, 5000); // Poll every 5 seconds
-            }
+        }
+
+        connect();
+    }
+
+    function stopStreaming() {
+        isStreaming.value = false;
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+        if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
         }
     }
 
-    function startPolling() {
-        if (isPolling.value) return;
-        isPolling.value = true;
-        pollUpdates();
-    }
-
-    function stopPolling() {
-        isPolling.value = false;
-    }
+    // Backwards-compatible aliases for polling
+    const isPolling = computed(() => isStreaming.value);
+    const startPolling = startStreaming;
+    const stopPolling = stopStreaming;
 
     async function sendMessage(content: string) {
         if (!activeChatId.value || !userStore.userId) return;
@@ -172,6 +203,10 @@ export const useChatStore = defineStore('chat', () => {
         isLoading,
         error,
         fetchChats,
+        isStreaming,
+        startStreaming,
+        stopStreaming,
+        isPolling,
         startPolling,
         stopPolling,
         sendMessage,

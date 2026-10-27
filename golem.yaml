@@ -45,3 +45,5 @@ httpApi:
         UserTimelineViewAgent: {}
         UserChatsUpdatesAgent: {}
         UserTimelineUpdatesAgent: {}
+        UserChatsUpdatesStreamAgent: {}
+        UserTimelineUpdatesStreamAgent: {}

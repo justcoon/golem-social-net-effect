@@ -30,6 +30,10 @@ The application follows a granular agent-based architecture, where different asp
 - **User Chats View Agent**: Aggregates full chat content for a user by querying multiple Chat Agents.
 - **User Chats Updates Agent**: Implements a long-polling mechanism to provide real-time notification of new messages or chats.
 
+#### Streaming Agents (Durable / Phantom)
+- **User Timeline Updates Stream Agent**: Streams live post updates for a user's timeline using Golem Durable Streams (SSE).
+- **User Chats Updates Stream Agent**: Streams live chat and message updates for a user using Golem Durable Streams (SSE).
+
 ### Frontend
 The application includes a web-based frontend built with Vue 3, TypeScript, Vite, and Tailwind CSS.
 
@@ -62,8 +66,8 @@ The system manages interactions through a mix of synchronous RPC calls and async
    - It then performs a fan-out broadcast, adding the post reference to the **User Timeline Agent** of every follower and friend.
 
 5. **Real-time Synchronization**:
-   - The **User Timeline Updates Agent** and **User Chats Updates Agent** implement long-polling mechanisms.
-   - They monitor stateful agents (**User Timeline Agent** and **User Chats Agent**) and return new references as soon as they are updated, allowing for live UI updates without constant full-page refreshes.
+   - **Long-Polling**: The **User Timeline Updates Agent** and **User Chats Updates Agent** implement long-polling mechanisms to return new references as soon as they are updated.
+   - **Durable Streaming**: The **User Timeline Updates Stream Agent** and **User Chats Updates Stream Agent** provide real-time updates over Golem Durable Streams (Server-Sent Events / SSE) with per-session phantom worker isolation.
 
 6. **Private Messaging & Group Chats**:
    - When a user initiates a chat, a **User Chats Agent** (stateful) initializes a new **Chat Agent**.
