@@ -5,12 +5,8 @@
     "target": "ES2022",
     "module": "ES2022",
     "noEmit": true,
-    "lib": [
-      "ES2022"
-    ],
-    "types": [
-      "node"
-    ],
+    "lib": ["ES2022"],
+    "types": ["node"],
     "moduleResolution": "bundler",
     "checkJs": false,
     "strict": true,
@@ -20,7 +16,5 @@
     "esModuleInterop": true,
     "useDefineForClassFields": false
   },
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

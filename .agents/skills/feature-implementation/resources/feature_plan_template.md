@@ -75,10 +75,6 @@ List all files that will be created, modified, or removed. Group by component or
   ```bash
   npm test            # npx tsx --test "test/*.test.ts"
   ```
-- **End-to-End (E2E) Test Suite**:
-  ```bash
-  ./run_e2e_test.sh   # or npm run test:e2e
-  ```
 
 ### Manual / Integration Verification
 

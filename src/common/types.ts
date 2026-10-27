@@ -6,8 +6,7 @@ export const UserConnectionType = {
   Following: "Following",
 } as const;
 
-export type UserConnectionType =
-  (typeof UserConnectionType)[keyof typeof UserConnectionType];
+export type UserConnectionType = (typeof UserConnectionType)[keyof typeof UserConnectionType];
 
 export const UserConnectionTypeSchema = Schema.Literals([
   UserConnectionType.Friend,
@@ -15,9 +14,7 @@ export const UserConnectionTypeSchema = Schema.Literals([
   UserConnectionType.Following,
 ]);
 
-export function getOppositeConnectionType(
-  type: UserConnectionType,
-): UserConnectionType {
+export function getOppositeConnectionType(type: UserConnectionType): UserConnectionType {
   switch (type) {
     case UserConnectionType.Follower:
       return UserConnectionType.Following;

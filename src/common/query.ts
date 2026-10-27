@@ -1,24 +1,14 @@
 import { Schema } from "effect";
 
-export function optTextMatches(
-  text: string | null | undefined,
-  query: string,
-): boolean {
+export function optTextMatches(text: string | null | undefined, query: string): boolean {
   return (
     query === "*" ||
-    (text !== null &&
-      text !== undefined &&
-      text.toLowerCase().includes(query.toLowerCase()))
+    (text !== null && text !== undefined && text.toLowerCase().includes(query.toLowerCase()))
   );
 }
 
-export function optTextExactMatches(
-  text: string | null | undefined,
-  query: string,
-): boolean {
-  return (
-    query === "*" || (text !== null && text !== undefined && text === query)
-  );
+export function optTextExactMatches(text: string | null | undefined, query: string): boolean {
+  return query === "*" || (text !== null && text !== undefined && text === query);
 }
 
 export function textMatches(text: string, query: string): boolean {

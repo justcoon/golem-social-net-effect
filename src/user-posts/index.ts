@@ -1,14 +1,9 @@
 import { Effect, Ref, Schema } from "effect";
-import {
-  defineAgent,
-  Http,
-  method,
-  Snapshot,
-} from "@golemcloud/effect-golem";
-import { TimestampSchema, Timestamp, ErrorResponseSchema } from "../common/types.js";
+import { defineAgent, Http, method, Snapshot } from "@golemcloud/effect-golem";
+import { TimestampSchema, Timestamp } from "../common/types.js";
 import { getCurrentTimestamp } from "../common/utils.js";
 import { parseQuery } from "../common/query.js";
-import { PostSchema, Post, PostAgent, fetchPostsByIds } from "../post/index.js";
+import { PostSchema, PostAgent, fetchPostsByIds } from "../post/index.js";
 
 export const PostRefSchema = Schema.Struct({
   postId: Schema.String,
@@ -31,9 +26,7 @@ export const UserPostsUpdatesSchema = Schema.Struct({
   posts: Schema.Array(PostRefSchema),
 });
 
-export type UserPostsUpdates = Schema.Schema.Type<
-  typeof UserPostsUpdatesSchema
->;
+export type UserPostsUpdates = Schema.Schema.Type<typeof UserPostsUpdatesSchema>;
 
 export function initUserPostsState(userId: string, now: Timestamp): UserPosts {
   return {
@@ -92,10 +85,7 @@ export const UserPostsAgent = defineAgent({
     }),
   },
 }).implement({
-  init: ({ id }) =>
-    Ref.make<UserPosts | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<UserPosts | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
       let current = yield* Ref.get(ref);
@@ -113,9 +103,7 @@ export const UserPostsAgent = defineAgent({
         Ref.get(ref).pipe(
           Effect.map((s) => {
             if (s !== null) {
-              const updates = s.posts.filter(
-                (p) => p.createdAt.timestamp > updatesSince.timestamp,
-              );
+              const updates = s.posts.filter((p) => p.createdAt.timestamp > updatesSince.timestamp);
               return {
                 userId: s.userId,
                 posts: updates,
@@ -137,10 +125,12 @@ export const UserPostsAgent = defineAgent({
             yield* Ref.set(ref, updatedState);
 
             const postAgent = yield* PostAgent.client.get({ id: postId }).pipe(Effect.orDie);
-            yield* postAgent.initPost.trigger({
-              createdBy: s.userId,
-              content,
-            }).pipe(Effect.orDie);
+            yield* postAgent.initPost
+              .trigger({
+                createdBy: s.userId,
+                content,
+              })
+              .pipe(Effect.orDie);
 
             return postRef;
           }),
@@ -186,9 +176,7 @@ export const UserPostsViewAgent = defineAgent({
           const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
           const userPosts = yield* postsAgent.getPosts({}).pipe(Effect.orDie);
 
-          yield* Effect.logInfo(
-            `get posts view - user id: ${userId}, query: ${query}`,
-          );
+          yield* Effect.logInfo(`get posts view - user id: ${userId}, query: ${query}`);
 
           if (userPosts !== null) {
             const parsedQuery = parseQuery(query);
@@ -208,7 +196,9 @@ export const UserPostsViewAgent = defineAgent({
         Effect.gen(function* () {
           const postsAgent = yield* UserPostsAgent.client.get({ id: userId }).pipe(Effect.orDie);
           const updatesSince = since ? { timestamp: since } : getCurrentTimestamp();
-          const userPostsUpdates = yield* postsAgent.getUpdates({ updatesSince }).pipe(Effect.orDie);
+          const userPostsUpdates = yield* postsAgent
+            .getUpdates({ updatesSince })
+            .pipe(Effect.orDie);
 
           yield* Effect.logInfo(
             `get posts updates view - user id: ${userId}, updates since: ${since}`,
@@ -227,4 +217,3 @@ export const UserPostsViewAgent = defineAgent({
       ),
   }),
 });
-

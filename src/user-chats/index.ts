@@ -1,17 +1,10 @@
-import { Effect, Ref, Schedule, Schema, Stream } from "effect";
+import { Effect, Ref, Schema } from "effect";
 import * as Result from "effect/Result";
-import {
-  defineAgent,
-  Http,
-  method,
-  WitTypes,
-} from "@golemcloud/effect-golem";
-import {
-  TimestampSchema,
-} from "../common/types.js";
+import { defineAgent, Http, method, WitTypes } from "@golemcloud/effect-golem";
+import { TimestampSchema } from "../common/types.js";
 import { Query, parseQuery } from "../common/query.js";
 import { arrayChunks, getCurrentTimestamp } from "../common/utils.js";
-import { pollForUpdates } from "../common/poll.js";
+import { pollForUpdates, streamUpdates } from "../common/poll.js";
 import { ChatSchema, Chat, ChatAgent } from "../chat/index.js";
 import {
   ChatRefSchema,
@@ -30,10 +23,7 @@ export * from "./schema.js";
 export * from "./spec.js";
 
 UserChatsAgent.implement({
-  init: ({ id }) =>
-    Ref.make<UserChats | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<UserChats | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => {
     const getOrInitState = Effect.gen(function* () {
       let current = yield* Ref.get(ref);
@@ -60,9 +50,7 @@ UserChatsAgent.implement({
             const { updatedState, chatRef } = addUserChat(s, chatId, s.userId, now);
             yield* Ref.set(ref, updatedState);
 
-            const chatAgent = yield* ChatAgent.client
-              .get({ id: chatId })
-              .pipe(Effect.orDie);
+            const chatAgent = yield* ChatAgent.client.get({ id: chatId }).pipe(Effect.orDie);
             yield* chatAgent.initChat
               .trigger({
                 participantsIds: participants,
@@ -79,9 +67,7 @@ UserChatsAgent.implement({
         Ref.get(ref).pipe(
           Effect.map((s) => {
             if (s !== null) {
-              const updates = s.chats.filter(
-                (c) => c.updatedAt.timestamp > updatesSince.timestamp,
-              );
+              const updates = s.chats.filter((c) => c.updatedAt.timestamp > updatesSince.timestamp);
               return {
                 userId: s.userId,
                 chats: updates,
@@ -112,7 +98,13 @@ UserChatsAgent.implement({
           yield* Effect.logInfo(
             `add chat - chat id: ${chatId}, created by: ${createdBy}, created at: ${createdAt.timestamp}`,
           );
-          const updatedState = addExistingChat(s, chatId, createdBy, createdAt, getCurrentTimestamp());
+          const updatedState = addExistingChat(
+            s,
+            chatId,
+            createdBy,
+            createdAt,
+            getCurrentTimestamp(),
+          );
           yield* Ref.set(ref, updatedState);
         }),
 
@@ -132,10 +124,7 @@ UserChatsAgent.implement({
   },
 });
 
-export function fetchChatsByIds(
-  chatIds: string[],
-  query?: Query,
-): Effect.Effect<Chat[], any, any> {
+export function fetchChatsByIds(chatIds: string[], query?: Query): Effect.Effect<Chat[], any, any> {
   return Effect.scoped(
     Effect.gen(function* () {
       const results: Chat[] = [];
@@ -186,9 +175,7 @@ export const UserChatsViewAgent = defineAgent({
     getChatsView: ({ userId, query }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const uAgent = yield* UserChatsAgent.client
-            .get({ id: userId })
-            .pipe(Effect.orDie);
+          const uAgent = yield* UserChatsAgent.client.get({ id: userId }).pipe(Effect.orDie);
           const userChats = yield* uAgent.getChats({}).pipe(Effect.orDie);
 
           yield* Effect.logInfo(`get chats view - user id: ${userId}, query: ${query}`);
@@ -213,12 +200,8 @@ export const UserChatsViewAgent = defineAgent({
     getChatsUpdatesView: ({ userId, updatesSince }) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const uAgent = yield* UserChatsAgent.client
-            .get({ id: userId })
-            .pipe(Effect.orDie);
-          const userChatsUpdates = yield* uAgent
-            .getUpdates({ updatesSince })
-            .pipe(Effect.orDie);
+          const uAgent = yield* UserChatsAgent.client.get({ id: userId }).pipe(Effect.orDie);
+          const userChatsUpdates = yield* uAgent.getUpdates({ updatesSince }).pipe(Effect.orDie);
 
           yield* Effect.logInfo(
             `get chats updates view - user id: ${userId}, updates since: ${updatesSince.timestamp}`,
@@ -260,29 +243,6 @@ export const UserChatsUpdatesAgent = defineAgent({
         ),
       ],
     }),
-    getChatsUpdatesStream: method({
-      input: {
-        userId: Schema.String,
-        since: Schema.NullOr(Schema.String),
-        iterWaitTime: Schema.NullOr(Schema.Number),
-      },
-      success: WitTypes.AgentStream(ChatRefSchema),
-      http: [
-        Http.get(
-          "/{userId}/chats/updates/stream?since={since}&iterWaitTime={iterWaitTime}",
-          {
-            durableStreams: {
-              slots: [
-                { source: "output", slot: "$result", name: "updates" },
-              ],
-              load: {
-                maxConcurrentReadersPerStream: 8,
-              },
-            },
-          },
-        ),
-      ],
-    }),
   },
 }).implement({
   init: () => Effect.void,
@@ -302,9 +262,7 @@ export const UserChatsUpdatesAgent = defineAgent({
             (uid, sinceTime) =>
               Effect.scoped(
                 Effect.gen(function* () {
-                  const uAgent = yield* UserChatsAgent.client
-                    .get({ id: uid })
-                    .pipe(Effect.orDie);
+                  const uAgent = yield* UserChatsAgent.client.get({ id: uid }).pipe(Effect.orDie);
                   const updates = yield* uAgent
                     .getUpdates({ updatesSince: sinceTime })
                     .pipe(Effect.orDie);
@@ -316,45 +274,53 @@ export const UserChatsUpdatesAgent = defineAgent({
           return res;
         }),
       ),
+  }),
+});
 
-    getChatsUpdatesStream: ({ userId, since, iterWaitTime }) =>
-      Effect.gen(function* () {
-        const context = yield* Effect.context<any>();
-        const interval = iterWaitTime ?? 1000;
-        const initialSince = since ?? getCurrentTimestamp().timestamp;
-        const cursorRef = yield* Ref.make(initialSince);
-
-        const pollEffect = Effect.scoped(
-          Effect.gen(function* () {
-            const currentSince = yield* Ref.get(cursorRef);
-            const uAgent = yield* UserChatsAgent.client
-              .get({ id: userId })
-              .pipe(Effect.orDie);
-            const updates = yield* uAgent
-              .getUpdates({ updatesSince: { timestamp: currentSince } })
-              .pipe(Effect.orDie);
-
-            if (updates && updates.chats.length > 0) {
-              const latest = updates.chats.reduce(
-                (max, c) =>
-                  c.updatedAt.timestamp > max ? c.updatedAt.timestamp : max,
-                currentSince,
-              );
-              yield* Ref.set(cursorRef, latest);
-              return updates.chats as ChatRef[];
-            }
-            return [] as ChatRef[];
-          }),
-        ).pipe(Effect.provide(context));
-
-        const stream = Stream.fromEffectSchedule(
-          pollEffect,
-          Schedule.spaced(`${interval} millis`),
-        ).pipe(
-          Stream.flatMap((chats: ChatRef[]) => Stream.fromIterable(chats)),
-        );
-
-        return stream;
-      }),
+export const UserChatsUpdatesStreamAgent = defineAgent({
+  name: "UserChatsUpdatesStreamAgent",
+  mode: "durable",
+  id: {},
+  http: Http.mount("/v1/social-net/users", { phantomAgent: true }),
+  methods: {
+    getChatsUpdates: method({
+      input: {
+        userId: Schema.String,
+        since: Schema.NullOr(Schema.String),
+        iterWaitTime: Schema.NullOr(Schema.Number),
+      },
+      success: WitTypes.AgentStream(ChatRefSchema),
+      http: [
+        Http.get("/{userId}/chats/updates/stream?since={since}&iterWaitTime={iterWaitTime}", {
+          durableStreams: {
+            slots: [{ source: "output", slot: "$result", name: "updates" }],
+            load: {
+              maxConcurrentReadersPerStream: 8,
+            },
+          },
+        }),
+      ],
+    }),
+  },
+}).implement({
+  init: () => Effect.void,
+  methods: () => ({
+    getChatsUpdates: ({ userId, since, iterWaitTime }) =>
+      streamUpdates(
+        userId,
+        since,
+        iterWaitTime,
+        (uid, currentSince) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const uAgent = yield* UserChatsAgent.client.get({ id: uid }).pipe(Effect.orDie);
+              const updates = yield* uAgent
+                .getUpdates({ updatesSince: { timestamp: currentSince } })
+                .pipe(Effect.orDie);
+              return updates ? [...updates.chats] : null;
+            }),
+          ),
+        (c) => c.updatedAt.timestamp,
+      ),
   }),
 });

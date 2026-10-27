@@ -8,11 +8,11 @@ const chatStore = useChatStore();
 
 onMounted(() => {
   chatStore.fetchChats();
-  chatStore.startPolling();
+  chatStore.startStreaming();
 });
 
 onUnmounted(() => {
-  chatStore.stopPolling();
+  chatStore.stopStreaming();
 });
 </script>
 

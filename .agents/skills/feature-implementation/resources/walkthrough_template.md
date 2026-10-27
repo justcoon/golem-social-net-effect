@@ -99,21 +99,7 @@ npm test            # npx tsx --test "test/*.test.ts"
 [Test runner output showing passed unit & integration tests]
 ```
 
-### 3.6 Containerized End-to-End (E2E) Test Suite Execution
-
-Command executed:
-
-```bash
-./run_e2e_test.sh   # or npm run test:e2e
-```
-
-**Result**:
-
-```text
-[E2E test runner output showing passed end-to-end test suites]
-```
-
-### 3.7 Runtime / Smoke Testing
+### 3.6 Runtime / Smoke Testing
 
 - Agent invocations, RPC checks, or scenario tests conducted.
 

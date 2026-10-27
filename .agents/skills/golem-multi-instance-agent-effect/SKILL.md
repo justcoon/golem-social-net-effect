@@ -206,6 +206,7 @@ const ephemeralCall = Effect.gen(function* () {
   return { value, metadata };
 });
 ```
+
 - To route every HTTP request to a fresh phantom instance, use the mount option:
 
 ```typescript

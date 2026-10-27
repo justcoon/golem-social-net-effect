@@ -1,11 +1,7 @@
 import { Schema } from "effect";
 import { defineAgent, Http, method, Snapshot } from "@golemcloud/effect-golem";
 import { TimestampSchema, ErrorResponseSchema } from "../common/types.js";
-import {
-  ChatRefSchema,
-  UserChatsSchema,
-  UserChatsUpdatesSchema,
-} from "./schema.js";
+import { ChatRefSchema, UserChatsSchema, UserChatsUpdatesSchema } from "./schema.js";
 
 export const UserChatsAgent = defineAgent({
   name: "UserChatsAgent",

@@ -12,9 +12,7 @@ export const TimelinePostRefSchema = Schema.Struct({
   updatedAt: TimestampSchema,
 });
 
-export type TimelinePostRef = Schema.Schema.Type<
-  typeof TimelinePostRefSchema
->;
+export type TimelinePostRef = Schema.Schema.Type<typeof TimelinePostRefSchema>;
 
 export const UserTimelineSchema = Schema.Struct({
   userId: Schema.String,
@@ -30,14 +28,9 @@ export const UserTimelineUpdatesSchema = Schema.Struct({
   posts: Schema.Array(TimelinePostRefSchema),
 });
 
-export type UserTimelineUpdates = Schema.Schema.Type<
-  typeof UserTimelineUpdatesSchema
->;
+export type UserTimelineUpdates = Schema.Schema.Type<typeof UserTimelineUpdatesSchema>;
 
-export function initUserTimelineState(
-  userId: string,
-  now: Timestamp,
-): UserTimeline {
+export function initUserTimelineState(userId: string, now: Timestamp): UserTimeline {
   return {
     userId,
     posts: [],
@@ -56,9 +49,7 @@ export function updateUserTimelinePosts(
   const posts = state.posts.filter((p) => !ids.has(p.postId));
   posts.push(...postRefs);
 
-  posts.sort((a, b) =>
-    b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp),
-  );
+  posts.sort((a, b) => b.updatedAt.timestamp.localeCompare(a.updatedAt.timestamp));
 
   const trimmedPosts = posts.length > POSTS_MAX_COUNT ? posts.slice(0, POSTS_MAX_COUNT) : posts;
 

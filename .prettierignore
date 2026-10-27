@@ -1,0 +1,16 @@
+node_modules
+dist
+golem-temp
+frontend
+.npm-cache
+package-lock.json
+*.png
+.agents
+data
+telemetry
+architecture.*
+openapi.yaml
+AGENTS.md
+*.md
+*.yml
+*.yaml

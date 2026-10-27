@@ -1,11 +1,6 @@
 import { Effect, Ref, Schema } from "effect";
 import * as Result from "effect/Result";
-import {
-  defineAgent,
-  Http,
-  method,
-  Snapshot,
-} from "@golemcloud/effect-golem";
+import { defineAgent, Http, method, Snapshot } from "@golemcloud/effect-golem";
 import {
   LikeType,
   LikeTypeSchema,
@@ -14,7 +9,7 @@ import {
   ErrorResponseSchema,
   ErrorResponse,
 } from "../common/types.js";
-import { Query, QuerySchema, optTextMatches, textExactMatches } from "../common/query.js";
+import { Query, QuerySchema, textExactMatches } from "../common/query.js";
 import { getCurrentTimestamp } from "../common/utils.js";
 import { UserChatsAgent } from "../user-chats/spec.js";
 
@@ -46,18 +41,14 @@ export const UpdateChatResponseSchema = Schema.Struct({
   chatId: Schema.String,
 });
 
-export type UpdateChatResponse = Schema.Schema.Type<
-  typeof UpdateChatResponseSchema
->;
+export type UpdateChatResponse = Schema.Schema.Type<typeof UpdateChatResponseSchema>;
 
 export const AddMessageResponseSchema = Schema.Struct({
   chatId: Schema.String,
   messageId: Schema.String,
 });
 
-export type AddMessageResponse = Schema.Schema.Type<
-  typeof AddMessageResponseSchema
->;
+export type AddMessageResponse = Schema.Schema.Type<typeof AddMessageResponseSchema>;
 
 function executeChatUpdates(
   chatId: string,
@@ -67,12 +58,8 @@ function executeChatUpdates(
   return Effect.scoped(
     Effect.gen(function* () {
       for (const pId of participantsIds) {
-        const userChats = yield* UserChatsAgent.client
-          .get({ id: pId })
-          .pipe(Effect.orDie);
-        yield* userChats.chatUpdated
-          .trigger({ chatId, updatedAt })
-          .pipe(Effect.orDie);
+        const userChats = yield* UserChatsAgent.client.get({ id: pId }).pipe(Effect.orDie);
+        yield* userChats.chatUpdated.trigger({ chatId, updatedAt }).pipe(Effect.orDie);
       }
     }),
   );
@@ -88,12 +75,8 @@ function executeAddChat(
     Effect.gen(function* () {
       for (const pId of participantsIds) {
         if (pId !== createdBy) {
-          const userChats = yield* UserChatsAgent.client
-            .get({ id: pId })
-            .pipe(Effect.orDie);
-          yield* userChats.addChat
-            .trigger({ chatId, createdBy, createdAt })
-            .pipe(Effect.orDie);
+          const userChats = yield* UserChatsAgent.client.get({ id: pId }).pipe(Effect.orDie);
+          yield* userChats.addChat.trigger({ chatId, createdBy, createdAt }).pipe(Effect.orDie);
         }
       }
     }),
@@ -371,17 +354,12 @@ export const ChatAgent = defineAgent({
     }),
   },
 }).implement({
-  init: ({ id }) =>
-    Ref.make<Chat | null>(null).pipe(
-      Effect.map((ref) => ({ id, ref })),
-    ),
+  init: ({ id }) => Ref.make<Chat | null>(null).pipe(Effect.map((ref) => ({ id, ref }))),
   methods: ({ id, ref }) => ({
     getChat: () => Ref.get(ref),
 
     getChatIfMatch: ({ query }) =>
-      Ref.get(ref).pipe(
-        Effect.map((s) => (s && chatMatchesQuery(s, query) ? s : null)),
-      ),
+      Ref.get(ref).pipe(Effect.map((s) => (s && chatMatchesQuery(s, query) ? s : null))),
 
     initChat: ({ participantsIds, createdBy, createdAt }) =>
       Effect.gen(function* () {
@@ -408,12 +386,7 @@ export const ChatAgent = defineAgent({
         newChat = initializeChatAgent(newChat, participantsIds, createdBy, createdAt);
         yield* Ref.set(ref, newChat);
 
-        yield* executeAddChat(
-          newChat.chatId,
-          createdBy,
-          newChat.createdAt,
-          newChat.participants,
-        );
+        yield* executeAddChat(newChat.chatId, createdBy, newChat.createdAt, newChat.participants);
 
         return { chatId: newChat.chatId };
       }),
@@ -436,9 +409,7 @@ export const ChatAgent = defineAgent({
           return yield* Effect.fail({ message: "No new participants" });
         }
 
-        yield* Effect.logInfo(
-          `add participants - new participants: ${newParticipants.length}`,
-        );
+        yield* Effect.logInfo(`add participants - new participants: ${newParticipants.length}`);
         yield* Ref.set(ref, updatedChat);
 
         yield* executeAddChat(
@@ -461,16 +432,15 @@ export const ChatAgent = defineAgent({
 
         yield* Effect.logInfo(`add message - user id: ${userId}, content: ${content}`);
         const { chat: updatedChat, message } = yield* Effect.fromResult(
-          addChatMessage(
-            s,
-            userId,
-            content,
-            getCurrentTimestamp(),
-          ),
+          addChatMessage(s, userId, content, getCurrentTimestamp()),
         );
 
         yield* Ref.set(ref, updatedChat);
-        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+        yield* executeChatUpdates(
+          updatedChat.chatId,
+          updatedChat.participants,
+          updatedChat.updatedAt,
+        );
 
         return { chatId: updatedChat.chatId, messageId: message.messageId };
       }),
@@ -490,7 +460,11 @@ export const ChatAgent = defineAgent({
         }
 
         yield* Ref.set(ref, updatedChat);
-        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+        yield* executeChatUpdates(
+          updatedChat.chatId,
+          updatedChat.participants,
+          updatedChat.updatedAt,
+        );
 
         return { chatId: updatedChat.chatId };
       }),
@@ -519,7 +493,11 @@ export const ChatAgent = defineAgent({
         }
 
         yield* Ref.set(ref, updatedChat);
-        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+        yield* executeChatUpdates(
+          updatedChat.chatId,
+          updatedChat.participants,
+          updatedChat.updatedAt,
+        );
 
         return { chatId: updatedChat.chatId };
       }),
@@ -531,9 +509,7 @@ export const ChatAgent = defineAgent({
           return yield* Effect.fail({ message: "Chat not exists" });
         }
 
-        yield* Effect.logInfo(
-          `remove message like - chat id: ${messageId}, user id: ${userId}`,
-        );
+        yield* Effect.logInfo(`remove message like - chat id: ${messageId}, user id: ${userId}`);
 
         const { updatedChat, updated } = removeChatMessageLike(
           s,
@@ -547,7 +523,11 @@ export const ChatAgent = defineAgent({
         }
 
         yield* Ref.set(ref, updatedChat);
-        yield* executeChatUpdates(updatedChat.chatId, updatedChat.participants, updatedChat.updatedAt);
+        yield* executeChatUpdates(
+          updatedChat.chatId,
+          updatedChat.participants,
+          updatedChat.updatedAt,
+        );
 
         return { chatId: updatedChat.chatId };
       }),
@@ -558,4 +538,3 @@ export const ChatAgent = defineAgent({
       Ref.make(saved).pipe(Effect.map((ref) => ({ id: context.id.id, ref }))),
   },
 });
-

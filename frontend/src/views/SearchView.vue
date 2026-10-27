@@ -15,7 +15,14 @@ const selectedOptionIndex = ref(-1);
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const router = useRouter();
 
-const searchModeOptions = [
+interface SearchOption {
+  value: SearchMode;
+  label: string;
+  icon: string;
+  example: string;
+}
+
+const searchModeOptions: SearchOption[] = [
   { value: 'userid', label: 'User ID', icon: '👤', example: 'john_doe' },
   { value: 'email', label: 'Email', icon: '📧', example: 'john@example.com' },
   { value: 'name', label: 'Name', icon: '📝', example: 'John' },
@@ -35,7 +42,7 @@ const activeModes = computed(() => {
   parts.forEach(part => {
     if (part.includes(':')) {
       const [mode] = part.split(':');
-      if (searchModeOptions.some(opt => opt.value === mode.toLowerCase())) {
+      if (mode && searchModeOptions.some(opt => opt.value === mode.toLowerCase())) {
         modes.push(mode.toLowerCase() as SearchMode);
       }
     } else if (part.trim()) {
@@ -75,7 +82,7 @@ function goToProfile(userId: string) {
     router.push(`/profile/${userId}`);
 }
 
-const addSearchOption = (mode: SearchMode, example: string) => {
+const addSearchOption = (mode: SearchMode, _example?: string) => {
   const prefix = mode === 'fulltext' ? '' : `${mode}:`;
   const newPart = prefix; // Only add the prefix, not the example
   
@@ -138,7 +145,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
     if (showOptions.value && selectedOptionIndex.value >= 0) {
       // Add selected option from menu
       const selectedOption = searchModeOptions[selectedOptionIndex.value];
-      addSearchOption(selectedOption.value, selectedOption.example);
+      if (selectedOption) {
+        addSearchOption(selectedOption.value, selectedOption.example);
+      }
     } else {
       // Perform search
       performSearch();
@@ -157,7 +166,9 @@ const handleKeyDown = (event: KeyboardEvent) => {
 const selectOption = (index: number) => {
   selectedOptionIndex.value = index;
   const selectedOption = searchModeOptions[index];
-  addSearchOption(selectedOption.value, selectedOption.example);
+  if (selectedOption) {
+    addSearchOption(selectedOption.value, selectedOption.example);
+  }
 };
 
 // Close options when clicking outside

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted } from 'vue';
-import { api, type Post } from '../api';
+import { api, type Post, type PostRef, formatTimestamp, streamTimelineUpdates } from '../api';
 import { useUserStore } from '../stores/user';
 import CreatePost from '../components/CreatePost.vue';
 import PostCard from '../components/PostCard.vue';
@@ -8,7 +8,9 @@ import PostCard from '../components/PostCard.vue';
 const posts = ref<Post[]>([]);
 const isLoading = ref(true);
 const userStore = useUserStore();
-let isPolling = false;
+let isStreaming = false;
+let abortController: AbortController | null = null;
+let reconnectTimeout: any = null;
 
 async function fetchTimeline(silent = false) {
   if (!userStore.userId) return;
@@ -30,62 +32,86 @@ async function fetchTimeline(silent = false) {
   }
 }
 
-async function startPolling() {
-    if (isPolling || !userStore.liveTimeline || !userStore.userId) return;
-    isPolling = true;
+async function startStreaming() {
+    if (isStreaming || !userStore.liveTimeline || !userStore.userId) return;
+    isStreaming = true;
 
-    try {
-        while (userStore.liveTimeline && userStore.userId) {
-            // Get the timestamp of the newest post
-            let since = new Date(0).toISOString();
-            if (posts.value.length > 0) {
-                const newestPost = posts.value[0];
-                if (newestPost) {
-                    const createdAt = newestPost.createdAt;
-                    since = createdAt.timestamp;
-                }
+    async function connect() {
+        if (!isStreaming || !userStore.liveTimeline || !userStore.userId) return;
+
+        abortController = new AbortController();
+
+        // Get the timestamp of the newest post
+        let since = new Date(0).toISOString();
+        if (posts.value.length > 0) {
+            const newestPost = posts.value[0];
+            if (newestPost) {
+                const createdAt = newestPost.createdAt;
+                since = formatTimestamp(createdAt) || since;
             }
+        }
 
-            try {
-                const response = await api.getTimelineUpdates(userStore.userId, since);
-                const data = response.data as any;
-                
-                // If data contains posts, it means there are updates
-                if (data && Array.isArray(data) && data.length > 0) {
-                    console.log('New posts detected, refreshing timeline...');
+        try {
+            await streamTimelineUpdates(
+                userStore.userId,
+                since,
+                abortController.signal,
+                async (update: PostRef) => {
+                    console.log('New post detected via stream, refreshing timeline...', update);
                     await fetchTimeline(true);
                 }
-            } catch (err) {
-                console.error('Polling error:', err);
-                // Wait a bit before retrying on error to avoid tight loops
-                await new Promise(resolve => setTimeout(resolve, 5000));
+            );
+        } catch (err: any) {
+            if (err.name !== 'AbortError' && !abortController?.signal.aborted) {
+                console.error('Timeline stream connection error:', err);
             }
-
-            // Small delay to prevent accidental rapid loops if backend returns immediately
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        } finally {
+            if (isStreaming && userStore.liveTimeline) {
+                reconnectTimeout = setTimeout(connect, 1000);
+            }
         }
-    } finally {
-        isPolling = false;
+    }
+
+    connect();
+}
+
+function stopStreaming() {
+    isStreaming = false;
+    if (abortController) {
+        abortController.abort();
+        abortController = null;
+    }
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
     }
 }
 
 watch(() => userStore.liveTimeline, (enabled) => {
     if (enabled) {
-        startPolling();
+        startStreaming();
+    } else {
+        stopStreaming();
+    }
+});
+
+watch(() => userStore.userId, () => {
+    fetchTimeline();
+    if (userStore.liveTimeline) {
+        stopStreaming();
+        startStreaming();
     }
 });
 
 onMounted(() => {
   fetchTimeline();
   if (userStore.liveTimeline) {
-    startPolling();
+    startStreaming();
   }
 });
 
 onUnmounted(() => {
-    // Polling will stop because the while loop checks userStore.liveTimeline, 
-    // and components unmounting usually means we stop caring, 
-    // but the recursive nature or loop will naturally exit if we were to null out state.
+  stopStreaming();
 });
 </script>
 
